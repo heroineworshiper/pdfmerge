@@ -1,0 +1,148 @@
+Overlay synchronized goog spreadsheet values on a PDF form.
+
+------------------------------------------------------------------------------
+Copyright (C) 2023 Adam Williams <broadcast at earthling dot net>
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+------------------------------------------------------------------------------
+
+PDF forms might be becoming rarer with the shift to phone apps &
+javascript, but when you need to fill them out, you really need to fill
+them out & most often, you need to copy values from a spreadsheet.  If
+things change on the spreadsheet, you want the PDF form to automatically
+take the new values.
+
+This program does not fill in predefined text entry areas but treats the
+page as a static image to draw text over in arbitary positions.  There
+is a server part & a browser part.  The server part works around some
+limitations of javascript & the google sheets interface.
+
+Google sheets proved to be the easiest to access from a 3rd party
+program.  The journey begins by creating some credentials in the goog
+cloud console.
+
+https://console.cloud.google.com
+
+There's a video on how to create the oauth credentials required by an
+outside program to access a spreadsheet:
+
+https://www.youtube.com/watch?v=qwqJcyLQSSQ
+
+PDFmerge needs an oauth client ID, client secret, token URI.  These are
+placed in the pdfmerge.conf file. The pdfmerge.conf.example contains
+some garbage to show the right format.
+
+Then run the server with the name of a project file.  If the file
+exists, it loads the project.  If it doesn't exist, it creates it.
+
+./server.py form
+
+
+Point a browser to the address shown to access the interface.  It has
+only been tested with Firefox.  Multiple projects can be edited
+simultaneously.  The server uses a different port for each one until it
+runs out of ports.
+
+The next step is copying the full path of a PDF file to the PATH box &
+pressing IMPORT IT.  This displays the 1st page of the file in the
+editing area.  The path needs to be of the form /datasheets/LM124.pdf
+not a URL.
+
+CREATING TEXT OVERLAYS
+
+General text entry is achieved by entering some text in the TEXT: box.
+Right click on the page & select NEW TEXT.  This places the new text at
+the cursor position.
+
+The text overlays have boxes to make it easier to see where they are. 
+The boxes are not drawn in printing mode.
+
+EDITING TEXT OVERLAYS
+
+To edit a text overlay, right click on it & select EDIT IT.  This copies
+the contents to the TEXT: box.  Edit the text there & press APPLY TEXT
+while the source area is still highlighted.  This copies the new text to
+the text overlay.  The APPLY TEXT button copies the text to any area
+that's selected.
+
+To change the text size, mouse wheel in the SIZE: box or enter a size &
+click on APPLY SIZE while an overlay is selected.
+
+Left click & drag to select multiple text areas.  Shift clicking also
+selects multiple text areas.  Right clicking with text areas selected
+presents the standard clipboard operations.  Multiple text areas may be
+copied & pasted.
+
+Left click & drag on a text area or multiple selected text areas to move
+them around.
+
+NAVIGATION
+
+Middle click & drag in the page to navigate around.  The mouse wheel
+zooms.  Change pages with the NEXT/PREV PAGE buttons.
+
+PRINTING
+
+Press the PRINT button to open a new tab in print mode.  This shows the
+current page with no boxes around the text overlays.  Right click in the
+page to save it as a PNG image in its current resolution or use the
+browser's print function to print it.  Right click to zoom & change the
+resolution.  
+
+This mode is navigated like a normal browser page, with the scroll bars &
+cursor keys.
+
+CREATING SPREADSHEET ENTRY
+
+To enter a value from a spreadsheet, open the spreadsheet in another
+window.  Right click on a cell with some data & pick GET LINK TO THIS
+CELL.  Then right click in the PDF area & pick PASTE NEW TEXT or PASTE
+OVER TEXT if something is already selected.  This creates a new text
+overlay or overwrites the contents of an existing text overlay with the
+spreadsheet data.
+
+Only 1 cell may be pasted at a time.  It might prompt for a google
+account in order to access the data.
+
+EDIT A SPREADSHEET ENTRY
+
+Right click on the text overlay & select EDIT IT.  The TEXT: box
+displays the link to the spreadsheet rather than the value it contains. 
+The only useful part is the &range= parameter.  Edit it & select APPLY
+TEXT to change the spreadsheet reference.
+
+If you change a value in the spreadsheet, select RESYNC VALUES to cause
+the PDF text areas to show the new spreadsheet values.
+
+INSERTING & DELETING ROWS & COLUMNS
+
+If you insert & delete rows & columns in the spreadsheet, there's no way
+for pdfmerge to automatically track the new locations.  You have to
+enter the row or column after the delete or after the insert in the ROW
+or COLUMN box.  Then press INSERT/DELETE ROW/COLUMN BEFORE to shift all
+the references starting from that point by 1.
+
+SAVING THE PROJECT
+
+Most operations cause the project to be saved.  If it isn't saved, it
+shows (modified) in the browser title.  Press SAVE to save it manually.
+The project is saved in the file passed to the server.  It's an ordinary
+text file with all the text overlays stored with URI encoding.
+
+
+
+
+

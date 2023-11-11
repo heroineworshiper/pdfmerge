@@ -1,0 +1,2688 @@
+<!--
+ PDFMERGE
+ Copyright (C) 2023 Adam Williams <broadcast at earthling dot net>
+ 
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 2 of the License, or
+ (at your option) any later version.
+ 
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ 
+ You should have received a copy of the GNU General Public License
+ along with this program; if not, write to the Free Software
+ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+--> 
+
+<style>
+#file {
+  width: 33%;
+}
+#sheet {
+  width: 33%;
+}
+#page {
+  width: 100;
+}
+#row_text {
+  width: 100;
+}
+#col_text {
+  width: 100;
+}
+#font_size_text {
+  width: 100;
+}
+#the_text {
+  width: 50%;
+}
+.context-menu {
+  display: none;
+  position: absolute;
+  background-color: #fff;
+  border: 1px solid #ccc;
+  z-index: 1000;
+  list-style: none;
+  padding: 0;
+}
+
+.context-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style-type: none;
+}
+
+.context-menu li {
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: pre;
+}
+
+.context-menu li:hover {
+  background-color: #f0f0f0;
+}
+</style>
+
+<font face=helvetica><b>
+
+<!-- LINK TO SPREADSHEET: <input type="text" id="sheet" /> -->
+
+<div id="toolbox">
+
+PATH TO PDF FILE:  <input type="text" id="file" />
+<button onClick="importPDF()"><b>IMPORT IT</button>
+<div id="busy"><font color="red">BUSY</font></div><BR>
+
+<button onClick="resync_pressed()"><B>RESYNC VALUES (ctrl-r)</button>
+<button onClick="save(false)"><B>SAVE (ctrl-s)</button>
+<button onClick="undo()"><b>UNDO (ctrl-z)</button>
+<button onClick="redo()"><b>REDO (ctrl-Z)</button>
+<button onClick="view()"><b>PRINT (ctrl-p)</button><BR>
+
+PAGE: <input type="text" id="page" />
+<button onClick="prev()"><b>PREV PAGE (PgUp)</button>
+<button onClick="next()"><b>NEXT PAGE (PgDn)</button>
+ZOOM (ctrl -/+): <output id="zoom">100%</output>
+<button onClick="fit()"><b>FIT WIDTH (ctrl-f)</button>
+
+<BR>
+<button onClick="insert_row()"><b>INSERT ROW BEFORE</button>
+<button onClick="delete_row()"><b>DELETE ROW BEFORE</button>
+<b>ROW (1-1000): <input type="text" id="row_text" />
+<BR>
+<button onClick="insert_col()"><b>INSERT COLUMN BEFORE</button>
+<button onClick="delete_col()"><b>DELETE COLUMN BEFORE</button>
+<b>COLUMN (A-Z): <input type="text" id="col_text" />
+<BR>
+
+SIZE: <input type="text" id="font_size_text" />
+<button onClick="apply_size()"><b>APPLY SIZE</button>
+TEXT: <input type="text" id="the_text" />
+<button onClick="apply_text()"><b>APPLY TEXT</button><BR>
+
+</div><!-- toolbox -->
+
+
+<canvas id="mane-canvas" style="border: 1px solid black; direction: ltr;"></canvas>
+<canvas id="pdf-canvas"></canvas>
+<canvas id="text-canvas"></canvas>
+<canvas id="overlay-canvas"></canvas>
+
+<div id="bgContextMenu" class="context-menu">
+  <ul>
+    <li id="menu_new">New text</li>
+    <li id="menu_paste_new">Paste new text <span style="float:right;">(ctrl-v)</span></li>
+    <li id="menu_all">Select all <span style="float:right;">(ctrl-a)</span></li>
+  </ul>
+</div>
+
+<div id="textContextMenu" class="context-menu">
+  <ul>
+    <li id="menu_edit">Edit it <span style="float:right;">(ctrl-e)</span></li>
+    <li id="menu_cut">Cut <span style="float:right;">(ctrl-x)</span></li>
+    <li id="menu_copy">Copy <span style="float:right;">(ctrl-c)</span></li>
+    <li id="menu_paste_over">Paste over text <span style="float:right;">(ctrl-v)</span></li>
+    <li id="menu_delete">Delete <span style="float:right;">(del)</span></li>
+    <li id="menu_all">Select all <span style="float:right;">(ctrl-a)</span></li>
+  </ul>
+</div>
+
+<div id="viewContextMenu" class="context-menu">
+  <ul id="viewMenuList">
+    <li id="save_png">Save PNG <span style="float:right;">(ctrl-s)</span></li>
+    <li id="next_page">Next</li>
+    <li id="prev_page">Prev</li>
+    <li><hr></li>
+    <!-- these are always overwritten before display -->
+    <li id="fit_width">Fit width</li>
+    <li id="zoom100">100%</li>
+    <li id="zoom150">150%</li>
+    <li id="zoom200">200%</li>
+    <li id="zoom300">300%</li>
+    <li id="zoom400">400%</li>
+    <li id="zoom600">600%</li>
+    <li id="zoom800">800%</li>
+  </ul>
+</div>
+
+<!-- The PDF decoder -->
+<!-- This must be updated as CDN's go down -->
+<!-- https://github.com/mozilla/pdf.js#including-via-a-cdn -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script>
+
+
+const TEXT_COLOR = "black";
+const SELECTED_TEXT_COLOR = "red";
+const FONT = "Arial";
+
+const MARGIN = 10;
+const CONTROL_H = 200;
+const MIN_FONT = 8;
+const MAX_FONT = 100;
+const EMPTY_SHEET_TEXT = "BUYMORGOOG";
+
+const AUTH_URI = "https://accounts.google.com/o/oauth2/auth";
+
+var redirect_uri = ""
+var client_id = "";
+const toolbox = document.getElementById("toolbox");
+const mane_canvas = document.getElementById("mane-canvas");
+const mane_context = mane_canvas.getContext("2d");
+const overlay_canvas = document.getElementById("overlay-canvas");
+const overlay_context = overlay_canvas.getContext("2d");
+const text_canvas = document.getElementById("text-canvas");
+const text_context = text_canvas.getContext("2d");
+const pdf_canvas = document.getElementById("pdf-canvas");
+const pdf_context = pdf_canvas.getContext("2d");
+const pdf_entry = document.getElementById('file')
+//const sheet_entry = document.getElementById('sheet')
+const zoom_text = document.getElementById('zoom')
+const page_text = document.getElementById('page')
+const bgContextMenu = document.getElementById("bgContextMenu");
+const textContextMenu = document.getElementById("textContextMenu");
+const viewContextMenu = document.getElementById("viewContextMenu");
+const viewMenuList = document.getElementById("viewMenuList");
+const busy_text = document.getElementById("busy");
+var modified = false;
+// lock out user input
+var busy = false;
+// disable auto reloads if we're in a login step
+var is_login = false
+// view mode
+var is_viewer = false;
+
+// PDF decoder
+var pdf = null;
+
+// last click was in canvas
+var isCanvas = false;
+// dragging the pdf_canvas
+var dragging_pdf = false;
+// dragging a text object
+var dragging_text = false;
+var text_moved = false;
+// dragging a bounding box
+var dragging_box = false;
+// starting cursor position of a drag
+var drag_cursor_x0 = 0;
+var drag_cursor_y0 = 0;
+// latest cursor position
+var drag_cursor_x1 = 0;
+var drag_cursor_y1 = 0;
+// starting scroll position of a drag
+var drag_scroll_x0 = 0;
+var drag_scroll_y0 = 0;
+// compress undo writes when changing the font size
+var changing_size = false;
+// last mousemove
+var last_x = 0;
+var last_y = 0;
+
+// the project file displayed in the window title
+var project_path = "";
+var pdf_path = "";
+//var sheet_path = "";
+const zoom_table = [ 1, 1.5, 2, 3, 4, 6, 8 ];
+// special zoom index for fit width
+const FIT_WIDTH = -1
+//var zoom_index = FIT_WIDTH
+var zoom_index = 0
+// recomputed when fit width
+var zoom = 1;
+var page = 1
+var scroll_x = 0;
+var scroll_y = 0;
+// button press coordinates for menu
+var menu_x = 0;
+var menu_y = 0;
+
+
+// add more if needed
+const cols = [ "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z" ];
+
+
+var text_areas = [];
+var font_size = 24;
+
+
+class TextArea
+{
+    constructor(x, y, page, font_size, text, sheet_text)
+    {
+        this.x = x;
+        this.y = y;
+        this.page = page;
+        this.font_size = font_size;
+// the text or spreadsheet URL
+        this.text = text;
+// last text from the spreadsheet
+        this.sheet_text = sheet_text;
+// extents of the bounding box
+        this.box_x = -1;
+        this.box_y = -1;
+        this.box_w = -1;
+        this.box_h = -1;
+// true for all selected texts
+        this.selected = false;
+// temporaries for drag operation
+        this.drag_x0 = -1;
+        this.drag_y0 = -1;
+    }
+
+// https://docs.google.com/spreadsheets/d/1g3VaMjSYQ0W-NtGVmkqdkrV8taxJyiJXiCHDwxq97Ak/edit#gid=0&range=B5
+// https://docs.google.com/spreadsheets/d/1g3VaMjSYQ0W-NtGVmkqdkrV8taxJyiJXiCHDwxq97Ak/edit#gid=0&range=B5:C5
+// get row & col numbers starting from 0 or -1 for no sheet link
+    get_range()
+    {
+        var result = [ -1, -1 ];
+        if(is_sheet(this.text))
+        {
+            var offset = this.text.indexOf("&range=");
+// skip range
+            offset += 7;
+            const col_offset = offset;
+            function isNumeric(char) {
+              return /^\d+$/.test(char);
+            }
+            while(offset < this.text.length && 
+                !isNumeric(this.text.charAt(offset)))
+                offset += 1;
+
+            var row_offset = offset;
+            var row = -1;
+            var col = -1;
+//console.log("get_range " + col_offset + " " + row_offset + " " + this.text.length);
+            if(col_offset <= this.text.length && row_offset <= this.text.length)
+            {
+                const col_text = this.text.substring(col_offset, row_offset).toUpperCase();
+                for(col = 0; col < cols.length; col++)
+                    if(col_text == cols[col]) break;
+                const row_text = this.text.substring(row_offset);
+                row = parseInt(row_text) - 1;
+
+//console.log("get_range " + this.text + " " + row + " " + col);
+// fail it if invalid
+                if(col >= cols.length || row < 0)
+                {
+                    row = -1;
+                    col = -1;
+                }
+                result = [ row, col ];
+            }
+        }
+        return result;
+    }
+
+// overwrite the row & column number after translationg from 0 to the sheet format
+    set_range(range)
+    {
+        if(is_sheet(this.text))
+        {
+            var offset = this.text.indexOf("&range=") + 7;
+            var old_text = this.text.substring(0, offset);
+            var row = range[0] + 1;
+            var col = range[1];
+            if(col >= cols.length) col = cols.length - 1;
+            const range_text = cols[col] + row.toString();
+            this.text = old_text + range_text;
+        }
+    }
+
+}
+
+
+function set_busy()
+{
+    busy = true;
+    busy_text.style.display = 'inline';
+}
+
+function clear_busy()
+{
+    busy = false;
+    busy_text.style.display = 'none';
+}
+
+// returns true when we called sync_sheet or reloaded
+async function initTokens(do_login)
+{
+    if(do_login)
+    {
+// step 1: get consent screen code
+// it either shows the consent page or silently provides a new code to renew the access token
+// get client_id from server config
+        console.log("initTokens: loading consent page")
+        await fetch("get_config?CLIENT_ID")
+            .then(response => {
+                return response.text();
+            })
+            .then(data => {
+                client_id = data;
+                console.log("initTokens client_id=" + client_id +
+                    " redirect_uri=" + redirect_uri);
+                window.location.href = AUTH_URI +
+                    "?client_id=" + client_id + 
+                    "&redirect_uri=" + redirect_uri + 
+                    "&scope=https://www.googleapis.com/auth/spreadsheets.readonly" +
+                    "&response_type=code";
+            })
+            .catch(e => {
+                console.error(e);
+            });
+        return true;
+    }
+    else
+    {
+// TODO: the server could detect the code argument,
+// perform get_tokens without index.html getting it,
+// send a dummy page which just reloads index.html without the code 
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get("code");
+        console.log("initTokens code=" + code);
+        if(code != null)
+        {
+// step 2: server gets access tokens with the code
+// server stores the token
+            console.log("initTokens: getting access token")
+            const data = await fetch("get_tokens?code=" + code)
+                .then(response => {
+                    return response.text();
+                })
+                .catch(e => {
+                    console.error(e);
+                });
+
+// reload without the code argument so user reloads work
+            window.location.href = redirect_uri;
+
+//             console.log("initTokens data=" + data)
+//             if(data.startsWith("OK"))
+//             {
+// // try the sync again
+//                 await sync_sheet(false, false);
+//                 draw_text(true);
+//             }
+            return true;
+        }
+    }
+    return false;
+}
+
+
+async function load_pdf()
+{
+    var PDFJS_HOME = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_HOME + 'pdf.worker.js';
+
+// Must load a file from the server rather than a local file to access the file
+    var loadingTask = pdfjsLib.getDocument("get_pdf?path=" + pdf_path);
+
+    try {
+        pdf = await loadingTask.promise;
+    } catch(e)
+    {
+        console.error(e);
+        return;
+    }
+
+    const decoded_page = await pdf.getPage(page);
+    var viewport = null
+
+
+// recompute the zoom based on the true width
+    if(zoom_index == FIT_WIDTH)
+    {
+        viewport = decoded_page.getViewport({ scale: 1 });
+        if(is_viewer)
+            zoom = window.innerWidth / viewport.width;
+        else
+            zoom = mane_canvas.width / viewport.width;
+    }
+
+    viewport = decoded_page.getViewport({ scale: zoom });
+//        const w = window.innerWidth - MARGIN;
+//        const h = window.innerHeight - MARGIN;
+//        const outputScale = w / viewport.width;
+
+    console.log("zoom=" + zoom +
+        " viewport w,h=" + viewport.width + 
+        "," + viewport.height);
+//
+// Prepare canvas using PDF page dimensions
+//
+
+// show the canvas
+//        pdf_canvas.style.display = 'block';
+        pdf_canvas.width = viewport.width;
+        pdf_canvas.height = viewport.height;
+// stretch to width of browser
+//        canvas.width = Math.floor(w);
+//        canvas.height = Math.floor(w * viewport.height / viewport.width);
+//        canvas.style.width = Math.floor(canvas.width) + "px";
+//        canvas.style.height = Math.floor(canvas.height) + "px";
+
+    if(is_viewer)
+    {
+        mane_canvas.width = viewport.width;
+        mane_canvas.height = viewport.height;
+        text_canvas.width = mane_canvas.width;
+        text_canvas.height = mane_canvas.height;
+        overlay_canvas.width = mane_canvas.width;
+        overlay_canvas.height = mane_canvas.height;
+        scroll_x = 0;
+        scroll_y = 0;
+    }
+
+
+    const transform = [1, 0, 0, 1, 0, 0];
+
+    //
+    // Render PDF page into canvas context
+    //
+    const renderContext = {
+      canvasContext: pdf_context,
+      transform,
+      viewport,
+    };
+    await decoded_page.render(renderContext).promise
+        .then(function () {
+            draw_text(true);
+            })
+        .catch(e => {
+            console.error(e);
+        });
+}
+
+// load missing values from the spreadsheet
+// do_all causes all values to be reloaded
+// always redraws the text
+async function sync_sheet(do_all, enable_login)
+{
+    var got_it = false;
+    var need_login = false;
+    
+    console.log("sync_sheet 1 do_all=" + do_all + " enable_login=" + enable_login);
+
+    for(const text of text_areas) {
+//        console.log("sync_sheet text=" + text.text)
+        if(is_sheet(text.text))
+        {
+//            console.log("sync_sheet sheet_text=" + text.sheet_text)
+            if(do_all || text.sheet_text == EMPTY_SHEET_TEXT)
+            {
+                var result = get_sheet_range(text.text);
+                var sheet = result[0];
+                var range = result[1];
+//                console.log("sync_sheet sheet=" + sheet + " range=" + range)
+                await fetch("get_cell?sheet=" + sheet +
+                    "&range=" + range)
+                    .then(response => {
+                        return response.text();
+                    })
+                    .then(data => {
+//                        console.log("sync_sheet data=" + data)
+                        if(data == "LOGIN")
+                        {
+                            need_login = true;
+                        }
+                        else
+                        {
+                            text.sheet_text = data;
+                            got_it = true;
+                        }
+                    })
+                    .catch(e => {
+                        console.error(e);
+                    });
+            }
+        }
+
+        if(need_login) break;
+    }
+
+
+    console.log("sync_sheet need_login=" + need_login + 
+        " enable_login=" + enable_login + 
+        " got_it=" + got_it)
+
+    if(need_login && enable_login)
+    {
+// save before reload
+        console.log("sync_sheet need_login && enable_login");
+        is_login = true;
+        modified = true;
+// saves the redo history here
+        await save(false);
+// reloads in here & never returns
+        await initTokens(true);
+    }
+    else
+    if(got_it)
+    {
+        console.log("sync_sheet got_it");
+        is_login = false;
+        modified = true;
+// saves the redo history here
+        await save(false);
+    }
+    else
+    {
+        console.log("sync_sheet did nothing");
+        is_login = false;
+        modified = true;
+// saves the redo history here
+        await save(false);
+    }
+}
+
+function resync_pressed()
+{
+    if(busy) return;
+
+    set_busy();
+    
+    (async () => {
+        await sync_sheet(true, true);
+        draw_text(true);
+        clear_busy();
+    })();
+}
+
+// draw the text overlays
+// load missing spreadsheet text
+function draw_text(composite_it)
+{
+// draw the texts
+    text_context.clearRect(0, 0, text_canvas.width, text_canvas.height);
+    text_areas.forEach(function(text) {
+        if(text.page == page)
+        {
+            var selected = false;
+            var color = TEXT_COLOR;
+            if(text.selected && !is_viewer)
+            {
+                selected = true;
+                color = SELECTED_TEXT_COLOR;
+            }
+
+    // compute the bounding box without zoom
+            text_context.font = text.font_size.toString() + "px " + FONT;
+            var text_ = text.text;
+    // handle empty text
+            if(text_ == "")
+                text_ = "*EMPTY*";
+            else
+            if(is_sheet(text_))
+                text_ = text.sheet_text;
+
+            var textMetrics = text_context.measureText(text_);
+            const margin = 2;
+            var w = textMetrics.width;
+            text.box_x = text.x - margin;
+            text.box_y = text.y - textMetrics.actualBoundingBoxAscent - margin;
+            text.box_w = textMetrics.width + margin * 2;
+            text.box_h = textMetrics.actualBoundingBoxAscent + textMetrics.actualBoundingBoxDescent + margin * 2;
+
+            text_context.strokeStyle = color;
+            text_context.fillStyle = color;
+            text_context.lineWidth = 2;
+
+    // get coordinates with zoom
+            var x = text.x * zoom - scroll_x;
+            var y = text.y * zoom - scroll_y;
+            var box_x = text.box_x * zoom - scroll_x;
+            var box_y = text.box_y * zoom - scroll_y;
+            var box_w = text.box_w * zoom;
+            var box_h = text.box_h * zoom;
+    // draw bounding box when not in print mode
+            if(!is_viewer)
+            {
+                text_context.strokeRect(box_x, box_y, box_w, box_h);
+            }
+
+    // draw the text with zoom
+            var zoomed_size = text.font_size * zoom;
+            text_context.font = zoomed_size.toString() + "px Arial";
+            text_context.fillText(text_, x, y);
+        }
+    });
+    
+    if(composite_it) do_composite();
+}
+
+// overlay the PDF, text
+function do_composite()
+{
+// clear destination
+    mane_context.fillStyle = 'grey';
+    mane_context.fillRect(0, 0, mane_canvas.width, mane_canvas.height);
+// draw the PDF
+    mane_context.drawImage(pdf_canvas, -scroll_x, -scroll_y);
+// draw the text
+    mane_context.drawImage(text_canvas, 0, 0);
+}
+
+async function redraw(do_all)
+{
+    if(do_all)
+    {
+        update_title();
+        if(zoom_index == FIT_WIDTH)
+            zoom_text.value = "FIT WIDTH"
+        else
+        {
+            value = zoom * 100
+            zoom_text.value = value.toString() + "%"
+        }
+        page_text.value = page.toString()
+        font_size_text.value = font_size.toString()
+// draw_text is in load_pdf
+        await load_pdf();
+    }
+    else
+    {
+        draw_text(true);
+    }
+}
+
+// deselect all texts.  Return true if one was selected
+function deselect_all()
+{
+    var result = false;
+    for(text of text_areas)
+    {
+        if(text.selected) result = true;
+        text.selected = false;
+    }
+    return result;
+}
+
+function have_selection()
+{
+    for(const text of text_areas)
+    {
+        if(text.selected)
+        {
+//console.log("have_selection true");
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+function update_title()
+{
+    modified_string = "";
+    if(modified) modified_string = " (modified)";
+    document.title = project_path + modified_string;
+//console.log("update_title " + document.title);
+}
+
+
+function update_text_entries()
+{
+    var selected_text = null;
+    var multiple = false;
+    for(var i = text_areas.length - 1; i >= 0; i--)
+    {
+        var text = text_areas[i];
+        if(text.selected)
+        {
+            if(selected_text == null)
+            {
+                selected_text = text;
+            }
+            else
+            {
+                multiple = true;
+            }
+        }
+    }
+
+    if(selected_text != null)
+    {
+//        font_size_text.value = selected_text.font_size.toString();
+//        font_size = parseInt(font_size_text.value);
+//         if(multiple)
+//         {
+//             the_text.value = "";
+//         }
+//         else
+//         {
+//            the_text.value = selected_text.text;
+//        }
+    }
+}
+
+// return if an undo buffer is needed
+function valid_size_change()
+{
+    return (font_size >= MIN_FONT && 
+        font_size < MAX_FONT &&
+        have_selection());
+}
+
+function handle_font_size()
+{
+// update the selections
+    var got_it = false;
+    if(font_size >= MIN_FONT && font_size < MAX_FONT)
+    {
+        text_areas.forEach(function(text) {
+            if(text.selected)
+            {
+                text.font_size = font_size;
+                got_it = true;
+            }
+        });
+
+        if(got_it)
+        {
+            modified = true;
+            update_title();
+            draw_text(true);
+        }
+    }
+}
+
+function draw_bounding_box()
+{
+    var rect = mane_canvas.getBoundingClientRect();
+    var x0 = drag_cursor_x0 - rect.left;
+    var y0 = drag_cursor_y0 - rect.top;
+    var x1 = drag_cursor_x1 - rect.left;
+    var y1 = drag_cursor_y1 - rect.top;
+    if(x1 < x0)
+    {
+        var t = x1;
+        x1 = x0;
+        x0 = t;
+    }
+    if(y1 < y0)
+    {
+        var t = y1;
+        y1 = y0;
+        y0 = t;
+    }
+    
+    overlay_context.clearRect(0, 0, text_canvas.width, text_canvas.height);
+    overlay_context.strokeStyle = 'black';
+    overlay_context.lineWidth = 1;
+    overlay_context.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    do_composite();
+    mane_context.drawImage(overlay_canvas, 0, 0);
+}
+
+function save_pressed()
+{
+// ignore the busy flag so it always saves
+    save(false);
+}
+
+async function compress_redos()
+{
+// save the redo buffer
+    if(changing_size)
+    {
+        changing_size = false;
+        await save(false);
+    }
+}
+
+
+async function save(is_undo)
+{
+// recursively save the redo buffer
+    await compress_redos();
+
+
+// post project file to server
+    var data = "IS_LOGIN " + is_login.toString() + "\n" +
+        "UNDO " + is_undo.toString() + "\n" +
+        "PDF " + pdf_path + "\n" +
+        "ZOOM_INDEX " + zoom_index + "\n" +
+        "PAGE " + page + "\n" +
+        "SHIFT_ROW " + row_text.value + "\n" +
+        "SHIFT_COL " + col_text.value + "\n" +
+        "SCROLL_X " + scroll_x + "\n" +
+        "SCROLL_Y " + scroll_y + "\n" +
+        "FONT_SIZE " + font_size + "\n" +
+        "THE_TEXT " + encodeURIComponent(the_text.value) + "\n";
+    for(text_area of text_areas)
+    {
+        string = "TEXT " + text_area.x +
+            " " + text_area.y +
+            " " + text_area.page +
+            " " + text_area.font_size +
+            " " + encodeURIComponent(text_area.text) + 
+            " " + encodeURIComponent(text_area.sheet_text) + 
+            "\n";
+        data = data + string;
+    }
+
+    const requestOptions = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain'
+        },
+        body: data
+    };
+    await fetch("save", requestOptions)
+        .then(response => {
+            if (response.ok) {
+                console.log("saved project");
+            } else {
+                console.log("shit");
+            }
+        })
+        .then(data => {
+//            console.log("save " + data);
+            modified = false;
+            update_title();
+        })
+        .catch(error => {
+            console.error(error);
+        });
+}
+
+function undo()
+{
+    if(busy) return;
+    set_busy();
+    (async () => {
+        await compress_redos();
+        modified = true;
+
+// copy some settings to determine what to update
+        const prev_page = page;
+        const prev_pdf = pdf_path;
+        const prev_zoom_index = zoom_index;
+        const prev_zoom = zoom;
+
+        await load(true, false);
+        
+        if(prev_page != page ||
+            prev_pdf != pdf_path ||
+            prev_zoom_index != zoom_index)
+        {
+            await redraw(true);
+        }
+        else
+        {
+            zoom = prev_zoom;
+            update_title();
+            await draw_text(true);
+        }
+        clear_busy();
+    })();
+}
+
+function redo()
+{
+    if(busy) return;
+    set_busy();
+    (async () => {
+        await compress_redos();
+        modified = true;
+// copy some settings to determine what to update
+        const prev_page = page;
+        const prev_pdf = pdf_path;
+        const prev_zoom_index = zoom_index;
+        const prev_zoom = zoom;
+
+        await load(false, true);
+
+        if(prev_page != page ||
+            prev_pdf != pdf_path ||
+            prev_zoom_index != zoom_index)
+        {
+            await redraw(true);
+        }
+        else
+        {
+            zoom = prev_zoom;
+            update_title();
+            await draw_text(true);
+        }
+        clear_busy();
+    })();
+}
+
+function get_value(line)
+{
+    line = line.trim()
+    const offset = line.indexOf(" ");
+    if(offset >= 0)
+        return line.substring(offset + 1, line.length);
+    else
+        return "";
+}
+
+function get_keyvalue(line)
+{
+    line = line.trim()
+    const offset = line.indexOf(" ");
+    if(offset >= 0)
+        return [line.substring(0, offset), line.substring(offset + 1, line.length)];
+    else
+        return ["", ""];
+}
+
+function index_to_zoom(zoom_index)
+{
+    var result = -1;
+    if(zoom_index != FIT_WIDTH)
+        result = zoom_table[zoom_index]
+    return result;
+}
+
+function zoom_to_index(zoom)
+{
+    for(var i = 0; i < zoom_table.length; i++)
+    {
+        if(zoom_table[i] == zoom)
+            return i;
+    }
+    return -1;
+}
+
+function index_to_zoomtext(i)
+{
+// pdfjslib seems to assume 72dpi for 100% zoom
+    const zooms = [
+        "Fit width <span style=\"float:right;\">(ctrl-f)",
+        "100% <span style=\"float:right;\">(72dpi)",
+        "150% <span style=\"float:right;\">(108dpi)",
+        "200% <span style=\"float:right;\">(144dpi)",
+        "300% <span style=\"float:right;\">(216dpi)",
+        "400% <span style=\"float:right;\">(288dpi)",
+        "600% <span style=\"float:right;\">(432dpi)",
+        "800% <span style=\"float:right;\">(576dpi)"
+    ];
+    return zooms[i + 1];
+}
+
+function index_to_menuitem(i)
+{
+    const items = [
+        "fit_width",
+        "zoom100",
+        "zoom150",
+        "zoom200",
+        "zoom300",
+        "zoom400",
+        "zoom600",
+        "zoom800"
+    ];
+    return items[i + 1];
+}
+
+
+
+
+async function load(is_undo, is_redo)
+{
+    var command = "load"
+// disable the login features
+    if(is_undo)
+        command = "undo"
+    else
+    if(is_redo)
+        command = "redo"
+
+
+// load the program state from the server
+    await fetch(command)
+        .then(response => {
+            return response.text();
+        })
+        .then(data => {
+//            console.log("load data=" + data);
+            if(data == "EMPTY") return;
+            
+            text_areas = [];
+            lines = data.split("\n");
+            lines.forEach(function(line) {
+                if(line.startsWith("IS_LOGIN") && !is_undo && !is_redo)
+                    is_login = (get_value(line).toLowerCase() === "true");
+                else if(line.startsWith("PATH"))
+                {
+                    project_path = get_value(line);
+//                    console.log("project_path=" + project_path);
+                }
+                else if(line.startsWith("PDF"))
+                {
+                    pdf_path = get_value(line);
+                    pdf_entry.value = pdf_path;
+//                    console.log("pdf_path=" + pdf_path);
+                }
+//                 else if(line.startsWith("SHEET"))
+//                 {
+//                     sheet_path = get_value(line);
+//                     sheet_entry.value = sheet_path;
+//                 }
+                else if(line.startsWith("ZOOM_INDEX"))
+                {
+                    zoom_index = parseInt(get_value(line));
+                    zoom = index_to_zoom(zoom_index);
+                }
+                else if(line.startsWith("PAGE"))
+                {
+                    page = parseInt(get_value(line));
+                    page_text.value = page;
+                }
+                else if(line.startsWith("SHIFT_ROW"))
+                {
+                    row_text.value = get_value(line);
+                }
+                else if(line.startsWith("SHIFT_COL"))
+                {
+                    col_text.value = get_value(line);
+                }
+                else if(line.startsWith("SCROLL_X"))
+                {
+                    if(!is_viewer) scroll_x = parseInt(get_value(line));
+                }
+                else if(line.startsWith("SCROLL_Y"))
+                {
+                    if(!is_viewer) scroll_y = parseInt(get_value(line));
+                }
+                else if(line.startsWith("FONT_SIZE"))
+                {
+                    font_size = parseInt(get_value(line));
+                    if(isNaN(font_size)) font_size = 24;
+                }
+                else if(line.startsWith("THE_TEXT"))
+                {
+                    the_text.value = decodeURIComponent(get_value(line));
+                }
+                else if(line.startsWith("TEXT"))
+                {
+                    var string = get_value(line);
+
+                    var keyvalue = get_keyvalue(string);
+                    string = keyvalue[1];
+                    var x = parseInt(keyvalue[0]);
+
+                    keyvalue = get_keyvalue(string);
+                    var y = parseInt(keyvalue[0]);
+                    string = keyvalue[1];
+
+                    keyvalue = get_keyvalue(string);
+                    var page_ = parseInt(keyvalue[0]);
+                    string = keyvalue[1];
+
+                    keyvalue = get_keyvalue(string);
+                    var font_size_ = parseInt(keyvalue[0]);
+                    if(isNaN(font_size_)) font_size_ = 24;
+                    string = keyvalue[1];
+
+                    keyvalue = get_keyvalue(string);
+                    text_ = decodeURIComponent(keyvalue[0]);
+                    sheet_text_ = decodeURIComponent(keyvalue[1]);
+
+                    var text_area = new TextArea(
+                        x,
+                        y,
+                        page_,
+                        font_size_,
+                        text_,
+                        sheet_text_);
+                    text_areas.push(text_area);
+//                     console.log("load TEXT" + 
+//                         " text=" + text_ + 
+//                         " sheet_text=" + sheet_text_);
+                }
+            });
+        })
+        .catch(e => {
+            console.error(e);
+        });
+
+}
+
+function dump()
+{
+    var string = "project_path=" + project_path + "\n" +
+        "pdf_path=" + pdf_path + "\n" +
+//        "sheet_path=" + sheet_path + "\n" +
+        "zoom_index=" + zoom_index + "\n" +
+        "page=" + page + "\n" +
+        "scroll_x=" + scroll_x + "\n" +
+        "scroll_y=" + scroll_y + "\n" +
+        "font_size=" + font_size + "\n" +
+        "the_text=" + the_text.value + "\n";
+    text_areas.forEach(function(text_area) {
+        var string2 = "TEXT X=" + text_area.x +
+            " Y=" + text_area.y +
+            " PAGE=" + text_area.page +
+            " FONT_SIZE=" + text_area.font_size +
+            " TEXT=" + text_area.text +
+            "\n";
+        string = string + string2;
+    });
+    console.log("dump\n" + string);
+}
+
+function importPDF()
+{
+    if(busy) return;
+    
+    set_busy();
+    (async () => {
+        await save(true);
+        pdf_path = pdf_entry.value;
+        page = 1
+        zoom_index = FIT_WIDTH
+        zoom = -1
+        console.log("importPDF pdf_path=" + pdf_path);
+        modified = true;
+        await save(false);
+        await redraw(true);
+        clear_busy();
+    })();
+}
+
+function next()
+{
+    if(!busy)
+    {
+        page++;
+        set_busy();
+        (async () => {
+            deselect_all();
+            await redraw(true);
+            clear_busy();
+        })();
+    }
+}
+
+function prev()
+{
+    if(page > 1 && !busy)
+    {
+        page--;
+        set_busy();
+        (async () => {
+            deselect_all();
+            await redraw(true);
+            clear_busy();
+        })();
+    }
+}
+
+function goto_page(p)
+{
+    if(p >= 1 && !busy)
+    {
+        page = p
+        set_busy();
+        (async () => {
+            await redraw(true);
+            clear_busy();
+        })();
+    }
+}
+
+function fit()
+{
+    if(busy) return;
+    
+    set_busy();
+    (async () => {
+        zoom_index = FIT_WIDTH;
+        scroll_x = 0;
+        await redraw(true);
+        clear_busy();
+    })();
+}
+
+
+function shift_row(amount)
+{
+    if(!busy)
+    {
+        set_busy();
+        (async () => {
+            var got_it = false;
+            const want_row = parseInt(row_text.value) - 1;
+            if(want_row >= 1)
+            {
+                for(const text of text_areas)
+                {
+                    var range = text.get_range();
+                    if(range[0] >= want_row)
+                    {
+// save the undo buffer
+                        if(!got_it) await save(true);
+                        range[0] += amount;
+                        text.set_range(range);
+                        text.sheet_text = EMPTY_SHEET_TEXT;
+                        got_it = true;
+                    }
+                }
+            }
+
+            if(got_it)
+            {
+// saves the redo buffer
+                await sync_sheet(false, true);
+                draw_text(true);
+            }
+            clear_busy();
+        })();
+    }
+}
+
+function shift_col(amount)
+{
+    if(!busy)
+    {
+        set_busy();
+        (async () => {
+            var got_it = false;
+// convert the column to number from 0
+            var want_col;
+            for(want_col = 0; want_col < cols.length; want_col++)
+                if(cols[want_col] == col_text.value.toUpperCase())
+                    break;
+            if(want_col >= 0)
+            {
+                for(const text of text_areas)
+                {
+                    var range = text.get_range();
+                    if(range[1] >= want_col)
+                    {
+// save the undo buffer
+                        if(!got_it) await save(true);
+                        range[1] += amount;
+                        text.set_range(range);
+                        text.sheet_text = EMPTY_SHEET_TEXT;
+                        got_it = true;
+                    }
+                }
+            }
+
+            if(got_it)
+            {
+// saves the redo buffer
+                await sync_sheet(false, true);
+                draw_text(true);
+            }
+            clear_busy();
+        })();
+    }
+}
+
+
+function insert_row()
+{
+    shift_row(1);
+}
+
+function delete_row()
+{
+    shift_row(-1);
+}
+
+function insert_col()
+{
+    shift_col(1);
+}
+
+function delete_col()
+{
+    shift_col(-1);
+}
+
+
+// copy text entry to the selected text area
+function apply_text()
+{
+    if(!busy)
+    {
+        set_busy();
+        (async () => {
+            var got_it = false;
+            for(const text of text_areas) 
+            {
+                if(text.selected)
+                {
+                    if(!got_it) await save(true);
+                    got_it = true;
+                    text.text = the_text.value;
+// force the resync
+                    text.sheet_text = EMPTY_SHEET_TEXT;
+                }
+            }
+
+            if(got_it)
+            {
+                modified = true;
+                update_title();
+// saves the redo buffer
+                await sync_sheet(false, true);
+                draw_text(true);
+            }
+            
+            clear_busy();
+        })();
+    }
+}
+
+function apply_size()
+{
+//console.log("apply_size 1 font_size=" + font_size + " valid=" + valid_size_change());
+    if(!busy && valid_size_change())
+    {
+        set_busy();
+        (async () => {
+//console.log("apply_size 1");
+// undo buffer
+            await save(true);
+            handle_font_size();
+// redo buffer
+            await save(false);
+            clear_busy();
+        })();
+    }
+}
+
+// the text is a spreadsheet cell
+function is_sheet(text)
+{
+    if(text.indexOf("docs.google.com/spreadsheets") >= 0 &&
+        text.indexOf("&range=") > 0)
+        return true;
+    else
+        return false;
+}
+
+// extract sheet & range from a URL
+function get_sheet_range(text)
+{
+    const key1 = "docs.google.com/spreadsheets/d/";
+    var offset = text.indexOf(key1);
+    var sheet = "";
+    var range = "";
+//    console.log("get_sheet_range text=" + text + " offset=" + offset);
+    if(offset >= 0)
+    {
+        sheet = text.substring(offset + key1.length, text.length);
+        var offset2 = sheet.indexOf("/")
+        sheet = sheet.substring(0, offset2);
+
+        const key2 = "range=";
+        offset = text.indexOf(key2);
+        if(offset >= 0)
+        {
+            range = text.substring(offset + key2.length, text.length);
+        }
+    }
+
+    return [sheet, range];
+}
+
+function resize_common()
+{
+// resize the canvas
+    if(is_viewer)
+    {
+// must compute the sizes during PDF decoding
+        mane_canvas.style.border = 0;
+        mane_canvas.style.position = 'absolute';
+        mane_canvas.style.top = 0;
+        mane_canvas.style.left = 0;
+    }
+    else
+    {
+        mane_canvas.style.position = 'absolute';
+        mane_canvas.style.top = toolbox.offsetTop + toolbox.offsetHeight + MARGIN;
+        mane_canvas.width = window.innerWidth - MARGIN * 2;
+        mane_canvas.height = window.innerHeight - MARGIN - mane_canvas.offsetTop;
+        mane_canvas.style.width = Math.floor(mane_canvas.width) + "px";
+        mane_canvas.style.height = Math.floor(mane_canvas.height) + "px";
+        text_canvas.width = mane_canvas.width;
+        text_canvas.height = mane_canvas.height;
+        overlay_canvas.width = mane_canvas.width;
+        overlay_canvas.height = mane_canvas.height;
+    }
+}
+
+// window event
+function resizeEvent(next_function)
+{
+    resize_common();
+    draw_text(true);
+}
+
+async function zoomIn()
+{
+}
+
+function handle_zoom(zoom_out, x, y)
+{
+// scrollbars are too painful in viewer mode
+    if(busy || is_viewer) return;
+    
+    set_busy();
+
+    (async () => {
+// cursor position relative to canvas
+	    var rect = mane_canvas.getBoundingClientRect();
+	    x = x - rect.left;
+	    y = y - rect.top;
+//console.log("mouseScroll x=" + x + " y=" + y)
+        need_redraw = false
+
+    // escape from fit width
+        got_it = false
+        if(zoom_index == FIT_WIDTH)
+        {
+            prev_zoom = zoom
+            if(prev_zoom < 0)
+            {
+                prev_zoom = 1
+                zoom_index = 0
+            }
+            else
+            {
+    // find nearest zoom
+                if(zoom_out)
+                {
+                    for(var i = zoom_table.length - 1; i >= 0; i--)
+                    {
+                        if(zoom_table[i] <= zoom)
+                        {
+                            zoom_index = i
+                            zoom = zoom_table[i]
+                            got_it = true
+                            need_redraw = true
+                            break
+                        }
+                    }
+                }
+                else
+                {
+                    for(var i = 0; i < zoom_table.length; i++)
+                    {
+                        if(zoom_table[i] >= zoom)
+                        {
+                            zoom_index = i
+                            zoom = zoom_table[i]
+                            got_it = true
+                            need_redraw = true
+                            break
+                        }
+                    }
+                }
+                if(!got_it)
+                {
+                    zoom_index = 0
+                }
+            }
+        }
+        else
+            prev_zoom = index_to_zoom(zoom_index)
+
+
+    //console.log("mouseScroll zoom_index=" + zoom_index + " prev_zoom=" + prev_zoom)
+        if(zoom_out)
+        {
+            if(zoom_index > 0) 
+            {
+                if(!got_it)
+                {
+                    zoom_index--
+                    zoom = zoom_table[zoom_index]
+                }
+                need_redraw = true
+            }
+        }
+        else
+        {
+            if(zoom_index < zoom_table.length - 1)
+            {
+                if(!got_it)
+                {
+                    zoom_index++
+                    zoom = zoom_table[zoom_index]
+                }
+                need_redraw = true
+            }
+        }
+
+        if(need_redraw)
+        {
+// scroll bars take wheel events, but we try to defeat repositioning
+            if(!is_viewer)
+            {
+// starting coordinate on document
+                var doc_x = (scroll_x + x) / prev_zoom
+                var doc_y = (scroll_y + y) / prev_zoom
+// straight algebraic conversion to new zoom
+                scroll_x = doc_x * zoom - x
+                scroll_y = doc_y * zoom - y
+            }
+            await redraw(true);
+        }
+        clear_busy();
+    })();
+}
+
+function mouseScroll(e)
+{
+    var change = e.wheelDelta || -e.detail;
+
+    handle_zoom((change < 0), e.layerX, e.layerY);
+}
+
+function view()
+{
+    if(!busy)
+    {
+        set_busy();
+        
+        
+        (async () => {
+// save the page number
+            await save(false);
+            const uri = redirect_uri + "/?view";
+            console.log("view " + uri);
+            window.open(uri);
+            clear_busy();
+        })();
+    }
+}
+
+document.addEventListener('keydown', function(e) 
+{
+//     console.log("keydown 1 " + document.activeElement + 
+//         " " + mane_canvas + 
+//         " " + e.key);
+// the only way to detect if the canvas is active is to match the data type
+    if (document.activeElement instanceof HTMLBodyElement) {
+        console.log("keydown 2 key=" + e.key + " ctrl=" + e.ctrlKey);
+        
+        if((e.key == 'ArrowRight' ||
+            e.key == 'ArrowDown' ||
+            e.key == 'PageDown') && !is_viewer)
+        {
+            next();
+        }
+        else
+        if((e.key == 'ArrowLeft' ||
+            e.key == 'ArrowUp' ||
+            e.key == 'PageUp') && !is_viewer)
+        {
+            prev();
+        }
+        else
+        if(e.key == 'Delete')
+        {
+            if(!busy)
+            {
+                set_busy();
+                (async () => {
+                    await handle_delete();
+                    clear_busy();
+                })();
+            }
+        }
+        else
+        if(e.key == 'a' && e.ctrlKey)
+        {
+            e.preventDefault();
+            select_all();
+        }
+        else
+        if(e.key == 'c' && e.ctrlKey)
+        {
+            e.preventDefault();
+            handle_copy();
+        }
+        else
+        if(e.key == 'e' && e.ctrlKey)
+        {
+            e.preventDefault();
+            edit_it();
+        }
+        else
+        if(e.key == 'f' && e.ctrlKey)
+        {
+            fit();
+        }
+        else
+//         if(e.key == 'n' && e.ctrlKey)
+//         {
+//             e.preventDefault();
+//             
+//             if(!busy)
+//             {
+//                 set_busy();
+//                 (async () => {
+// 	                var rect = mane_canvas.getBoundingClientRect();
+// 	                var x = last_x - rect.left;
+// 	                var y = last_y - rect.top;
+//                     await new_text(x, y, the_text.value);
+//                     clear_busy();
+//                 })();
+//             }
+//         }
+//         else
+        if(e.key == 'p' && e.ctrlKey)
+        {
+            e.preventDefault();
+            view();
+        }
+        else
+        if(e.key == 'r' && e.ctrlKey)
+        {
+            e.preventDefault();
+            resync_pressed();
+        }
+        else
+        if(e.key == 's' && e.ctrlKey)
+        {
+            e.preventDefault();
+            if(is_viewer)
+                save_png();
+            else
+                save(false);
+        }
+        else
+        if(e.key == 'v' && e.ctrlKey)
+        {
+            e.preventDefault();
+            
+            if(!busy)
+            {
+                set_busy();
+                (async () => {
+                    if(have_selection())
+                        await paste_over_text(last_x, last_y);
+                    else
+                        await paste_new_text(last_x, last_y);
+                    clear_busy();
+                })();
+            }
+        }
+        else
+        if(e.key == 'x' && e.ctrlKey)
+        {
+            e.preventDefault();
+            
+            if(!busy)
+            {
+                set_busy();
+                (async () => {
+                    if(handle_copy())
+                        await handle_delete();
+                    clear_busy();
+                })();
+            }
+        }
+        else
+        if(e.key == 'z' && e.ctrlKey)
+        {
+            undo();
+        }
+        else
+        if(e.key == 'Z' && e.ctrlKey)
+        {
+            redo();
+        }
+        else
+        if(e.key == '-' && e.ctrlKey && !is_viewer)
+        {
+            e.preventDefault();
+            handle_zoom(true, last_x, last_y);
+        }
+        else
+        if((e.key == '+' || e.key == '=') && e.ctrlKey && !is_viewer)
+        {
+            e.preventDefault();
+            handle_zoom(false, last_x, last_y);
+        }
+    }
+});
+
+mane_canvas.onmousedown = function(e)
+{
+    if(busy) return;
+
+// left button selects
+    if(e.button == 0)
+    {
+// ignore if context menu is open
+        if(bgContextMenu.style.display == "block" ||
+            textContextMenu.style.display == "block" ||
+            viewContextMenu.style.display == "block" ||
+            is_viewer)
+            return;
+    
+        var got_it = select_text(e);
+        
+        if(!got_it)
+        {
+            deselect_all();
+// start a bounding box
+            drag_cursor_x0 = e.clientX;
+            drag_cursor_y0 = e.clientY;
+            drag_cursor_x1 = e.clientX;
+            drag_cursor_y1 = e.clientY;
+            dragging_box = true;
+        }
+        else
+        {
+// start a dragging operation
+            dragging_text = true;
+            text_moved = false;
+            drag_cursor_x0 = e.clientX;
+            drag_cursor_y0 = e.clientY;
+            text_areas.forEach(function(text) {
+                text.drag_x0 = text.x;
+                text.drag_y0 = text.y;
+            });
+        }
+
+        draw_text(true);
+    }
+    else
+// middle button scrolls
+    if(e.button == 1 && !is_viewer)
+    {
+	    var rect = mane_canvas.getBoundingClientRect();
+	    var canvasX = e.clientX - rect.left;
+	    var canvasY = e.clientY - rect.top;
+	    var x = e.clientX;
+	    var y = e.clientY;
+
+        isCanvas = true;
+        dragging_pdf = true;
+        drag_cursor_x0 = x;
+        drag_cursor_y0 = y;
+        drag_scroll_x0 = scroll_x;
+        drag_scroll_y0 = scroll_y;
+    }
+}
+
+window.onmouseup = function(e)
+{
+    if(dragging_box)
+    {
+// hide the box
+        do_composite();
+    }
+
+    isCanvas = false
+    dragging_pdf = false
+    if(dragging_text)select_text
+    {
+        if(text_moved)
+        {
+// save redo buffer
+            save(false);
+        }
+        dragging_text = false;
+        text_moved = false;
+    }
+    dragging_box = false;
+    
+    if(modified)
+    {
+        update_title();
+    }
+}
+
+window.onmousemove = function(e)
+{
+    last_x = e.clientX;
+    last_y = e.clientY;
+
+	var x = e.clientX;
+	var y = e.clientY;
+
+    if(dragging_pdf)
+    {
+        scroll_x = drag_cursor_x0 - x + drag_scroll_x0
+        scroll_y = drag_cursor_y0 - y + drag_scroll_y0
+        redraw(false)
+    }
+    else
+    if(dragging_text)
+    {
+        text_areas.forEach(function(text) {
+            if(text.selected)
+            {
+                if(!text_moved)
+                {
+                    text_moved = true;
+// save the undo buffer
+                    save(true);
+                }
+                text.x = text.drag_x0 + (x - drag_cursor_x0) / zoom;
+                text.y = text.drag_y0 + (y - drag_cursor_y0) / zoom;
+            }
+        });
+        draw_text(true);
+        modified = true;
+    }
+    else
+    if(dragging_box)
+    {
+        drag_cursor_x1 = e.clientX;
+        drag_cursor_y1 = e.clientY;
+
+// update the text selection
+        deselect_all();
+        var rect = mane_canvas.getBoundingClientRect();
+        var x0 = drag_cursor_x0 - rect.left;
+        var y0 = drag_cursor_y0 - rect.top;
+        var x1 = drag_cursor_x1 - rect.left;
+        var y1 = drag_cursor_y1 - rect.top;
+        if(x1 < x0)
+        {
+            var t = x1;
+            x1 = x0;
+            x0 = t;
+        }
+        if(y1 < y0)
+        {
+            var t = y1;
+            y1 = y0;
+            y0 = t;
+        }
+        
+        for(text of text_areas)
+        {
+            if(text.page != page) continue;
+        
+// get coordinates with zoom
+            var text_x = text.box_x * zoom - scroll_x;
+            var text_y = text.box_y * zoom - scroll_y;
+            var text_w = text.box_w * zoom;
+            var text_h = text.box_h * zoom;
+            if(text_x < x1 &&
+                text_x + text_w >= x0 &&
+                text_y < y1 &&
+                text_y + text_h >= y0)
+            {
+                text.selected = true;
+            }
+        }
+        draw_text(false);
+// show the box
+        draw_bounding_box();
+    }
+}
+
+
+
+
+// BEGIN HERE
+// ============================================================================
+
+// construct the redirect_uri from our own URI
+redirect_uri = window.location.href
+offset = redirect_uri.lastIndexOf("/")
+
+// strip all the arguments to get the redirect_uri
+if(offset != -1)
+{
+    redirect_uri = redirect_uri.substring(0, offset);
+    if(window.location.href.substring(offset + 1) == "?view")
+        is_viewer = true;
+}
+console.log("uri=" + window.location.href + " is_viewer=" + is_viewer);
+
+
+
+if(is_viewer)
+{
+    toolbox.style.display = 'none';
+    document.body.style.backgroundColor = 'grey'; 
+}
+
+// hide the off screen canvases
+pdf_canvas.style.display = 'none';
+text_canvas.style.display = 'none';
+busy_text.style.display = 'none';
+text_canvas.style.backgroundColor = "rgba(0, 0, 0, 0)"; // Fully transparent
+
+overlay_canvas.style.display = 'none';
+overlay_canvas.style.backgroundColor = "rgba(0, 0, 0, 0)"; // Fully transparent
+
+mane_canvas.addEventListener("DOMMouseScroll",	
+	mouseScroll,
+	false);
+mane_canvas.addEventListener("mousewheel",	
+	mouseScroll,
+	false);
+
+mane_canvas.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+
+// hide it
+    if(bgContextMenu.style.display == "block")
+    {
+        bgContextMenu.style.display = "none";
+        return;
+    }
+    if(textContextMenu.style.display == "block")
+    {
+        textContextMenu.style.display = "none";
+        return;
+    }
+    if(viewContextMenu.style.display == "block")
+    {
+        viewContextMenu.style.display = "none";
+        return;
+    }
+
+// test for new selection
+    var selected = false;
+    selected = select_text(e);
+
+// disable this to always show the bgContextMenu when not clicking over text
+    if(!selected)
+    {
+// test for previous selection
+        for(var i = 0; i < text_areas.length; i++)
+        {
+            if(text_areas[i].selected)
+            {
+                selected = true;
+                break;
+            }
+        }
+    }
+
+// show it
+    menu_x = e.clientX;
+    menu_y = e.clientY;
+    if(is_viewer)
+    {
+        menu_x += window.scrollX;
+        menu_y += window.scrollY;
+
+// show an indication of the current zoom level
+        var item = document.getElementById("fit_width");
+// delete the menu items
+        for(var i = -1; i < zoom_table.length; i++)
+            viewMenuList.removeChild(viewMenuList.lastElementChild);
+        
+// recreate the menu items
+        for(var i = -1; i < zoom_table.length; i++)
+        {
+            var text = "";
+            if(zoom_index == i)
+                text = "*" + index_to_zoomtext(i);
+            else
+            {
+                text = index_to_zoomtext(i);
+            }
+            var li = document.createElement("li");
+// get it to parse the span tags
+            li.innerHTML = text;
+            li.setAttribute("id", index_to_menuitem(i));
+            viewMenuList.appendChild(li);
+        }
+
+        viewContextMenu.style.left = menu_x + "px";
+        viewContextMenu.style.top = menu_y + "px";
+        viewContextMenu.style.display = "block";
+    }
+    else
+    if(selected)
+    {
+        textContextMenu.style.left = menu_x + "px";
+        textContextMenu.style.top = menu_y + "px";
+        textContextMenu.style.display = "block";
+        draw_text(true);
+    }
+    else
+    {
+//        if(deselect_all()) draw_text(true);
+        bgContextMenu.style.left = menu_x + "px";
+        bgContextMenu.style.top = menu_y + "px";
+        bgContextMenu.style.display = "block";
+    }
+
+});
+
+// left click in context menu
+viewContextMenu.addEventListener("click", function (e) {
+    viewContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+// right click in context menu
+viewContextMenu.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+    viewContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+// left click in context menu
+bgContextMenu.addEventListener("click", function (e) {
+    bgContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+// right click in context menu
+bgContextMenu.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+    bgContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+// left click in context menu
+textContextMenu.addEventListener("click", function (e) {
+    textContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+// right click in context menu
+textContextMenu.addEventListener("contextmenu", function (e) {
+    e.preventDefault();
+    textContextMenu.style.display = "none";
+    handle_menu(e);
+});
+
+
+function select_text(e)
+{
+	var rect = mane_canvas.getBoundingClientRect();
+	var x = e.clientX - rect.left;
+	var y = e.clientY - rect.top;
+    var got_it = false;
+
+//console.log("select_text x=" + x + " y=" + y);
+// select in stacking order
+    for(var i = text_areas.length - 1; i >= 0; i--)
+    {
+        var text = text_areas[i];
+        
+        if(text.page != page) continue;
+// get coordinates with zoom
+        var text_x = text.box_x * zoom - scroll_x;
+        var text_y = text.box_y * zoom - scroll_y;
+        var text_w = text.box_w * zoom;
+        var text_h = text.box_h * zoom;
+
+//console.log("onmousedown text x=" + text_x + 
+//" y=" + text_y + 
+//" w=" + text_w + 
+//" h=" + text_h);
+        if(x >= text_x && 
+            x < text_x + text_w &&
+            y >= text_y &&
+            y < text_y + text_h)
+        {
+// don't deselect others if we're already selected or shift is down
+            if(!text.selected)
+            {
+                if(!e.shiftKey)
+                    deselect_all();
+                text.selected = true;
+            }
+            else
+            if(e.shiftKey)
+            {
+// deselect if shift down
+                text.selected = false;
+            }
+
+            got_it = true;
+            update_text_entries();
+//            console.log("onmousedown 2");
+            break;
+        }
+    }
+    return got_it;
+}
+
+// create a new text area
+async function new_text(x, y, text)
+{
+// save the undo buffer
+    await save(true);
+    var text_area = new TextArea(
+// starting coordinate on document
+        (x + scroll_x) / zoom,
+        (y + scroll_y) / zoom,
+        page,
+        font_size,
+        text,
+        EMPTY_SHEET_TEXT);
+console.log("new_text x=" + x + 
+    " scroll_x=" + scroll_x + 
+    " y=" + y + 
+    " scroll_y=" + scroll_y +
+    " zoom=" + zoom +
+    " resultx=" + text_area.x +
+    " resulty=" + text_area.y);
+    deselect_all();
+    text_area.selected = true;
+    text_areas.push(text_area);
+    modified = true;
+
+    update_title();
+// saves the redo history here
+    await sync_sheet(false, true);
+    draw_text(true);
+}
+
+async function put_clipboard(text)
+{
+    navigator.clipboard.writeText(text);
+}
+
+async function get_clipboard(next_function)
+{
+    var result = "";
+//console.log("get_clipboard 1");
+    try
+    {
+//console.log("get_clipboard 2");
+// this requires enabling a bunch of settings in about:config
+// dom.events.asyncClipboard.readText
+// dom.events.testing.asyncClipboard
+        const clipboardText = await navigator.clipboard.readText();
+        if(clipboardText != "")
+        {
+            result = clipboardText;
+            console.log("get_clipboard clipboard=" + clipboardText);
+        }
+        else
+        {
+            console.log("get_clipboard empty clipboard");
+        }
+    } catch (error) {
+        console.error("get_clipboard: Clipboard read error:", error);
+    }
+
+    return result;
+}
+
+// return true if any areas were copied
+function handle_copy()
+{
+// construct JSON from all selected text areas
+    var text_array = []
+    var result = false;
+    for(text of text_areas)
+    {
+        if(text.selected)
+        {
+            var dict = Object();
+            dict.x = text.x;
+            dict.y = text.y;
+            dict.font_size = text.font_size;
+            dict.text = text.text;
+            dict.sheet_text = text.sheet_text;
+            text_array.push(dict);
+            result = true;
+        }
+    }
+    var data = Object();
+    data.texts = text_array;
+    const data_string = JSON.stringify(data);
+    put_clipboard(data_string);
+    return result;
+}
+
+function select_all()
+{
+    for(text of text_areas)
+    {
+        if(text.page == page)
+            text.selected = true;
+    }
+    draw_text(true);
+    console.log("select all");
+}
+
+async function handle_delete()
+{
+    var got_it = false;
+    for(var i = text_areas.length - 1; i >= 0; i--)
+    {
+        if(text_areas[i].selected)
+        {
+// undo buffer
+            if(!got_it) await save(true);
+            text_areas.splice(i, 1);
+            got_it = true;
+        }
+    }
+    if(got_it)
+    {
+        modified = true;
+// redo buffer
+        await save(false);
+        update_title();
+        draw_text(true);
+    }
+}
+
+// test if clipboard contains json encoded text areas
+// return the array of text area dicts if they exist
+// return null if it's plain text
+function get_text_areas(text)
+{
+    if(text.startsWith("{\"texts\":"))
+    {
+        const text_array = JSON.parse(text);
+        if(text_array.texts !== undefined &&
+            text_array.texts.length > 0)
+        {
+            const dict = text_array.texts[0];
+            if(dict.text !== undefined)
+                return text_array.texts;
+        }
+    }
+
+    return null;
+}
+
+async function paste_over_text(x, y)
+{
+	var rect = mane_canvas.getBoundingClientRect();
+	x = x - rect.left;
+	y = y - rect.top;
+// paste over text from the clipboard
+    var text = await get_clipboard();
+    if(text != "")
+    {
+        console.log("paste_over_text clipboard=" + text);
+// paste the 1st entry if it's json encoded areas
+        const text_array = get_text_areas(text);
+        if(text_array != null)
+        {
+            const dict = text_array[0];
+            console.log("paste_over_text text=" + dict.text);
+            text = dict.text;
+        }
+
+
+        var got_it = false;
+        for(const text_area of text_areas) {
+            if(text_area.selected)
+            {
+// save undo buffer
+                if(!got_it) await save(true);
+                text_area.text = text;
+                text_area.sheet_text = EMPTY_SHEET_TEXT;
+                got_it = true;
+            }
+        }
+
+        if(got_it)
+        {
+            modified = true;
+            update_title();
+// saves the redo buffer
+            await sync_sheet(false, true);
+            draw_text(true);
+        }
+    }
+    else
+    {
+        console.log("paste_over_text empty clipboard");
+    }
+}
+
+async function paste_new_text(x, y)
+{
+	var rect = mane_canvas.getBoundingClientRect();
+	x = x - rect.left;
+	y = y - rect.top;
+    const text = await get_clipboard();
+    if(text != "")
+    {
+//                the_text.value = text;
+        console.log("menu_paste_new clipboard=" + text);
+
+        const text_array = get_text_areas(text);
+        if(text_array != null)
+        {
+// paste them all & select the new ones
+            deselect_all();
+// find top left coords on document
+            var top_x, top_y;
+            var got_it = false;
+            for(const dict of text_array)
+            {
+                if(!got_it || dict.x < top_x || dict.y < top_y)
+                {
+                    got_it = true;
+                    top_x = dict.x;
+                    top_y = dict.y;
+                }
+            }
+
+// paste them
+// cursor position on document
+            const cursor_x = (x + scroll_x) / zoom;
+            const cursor_y = (y + scroll_y) / zoom;
+// undo buffer
+            await save(true);
+            for(const dict of text_array)
+            {
+                var text_area = new TextArea(
+                    dict.x - top_x + cursor_x,
+                    dict.y - top_y + cursor_y,
+                    page,
+                    dict.font_size,
+                    dict.text,
+                    dict.sheet_text);
+                text_area.selected = true;
+                text_areas.push(text_area);
+            }
+// saves the redo buffer here
+            modified = true;
+            await sync_sheet(false, true);
+            draw_text(true);
+        }
+        else
+        {
+            await new_text(x, y, text);
+        }
+    }
+    else
+    {
+        console.log("menu_paste_new empty clipboard");
+    }
+}
+
+function edit_it()
+{
+// copy the selected values to the user entry boxes
+    for(const text of text_areas) 
+    {
+        if(text.selected)
+        {
+            font_size_text.value = text.font_size.toString();
+            font_size = parseInt(font_size_text.value);
+
+            the_text.value = text.text;
+            break;
+        }
+    }
+}
+
+function save_png()
+{
+    var dataURL = mane_canvas.toDataURL("image/png");
+    var downloadLink = document.createElement("a");
+    downloadLink.href = dataURL;
+    downloadLink.download = "pdfmerge.png";
+    downloadLink.click();
+}
+
+function handle_menu(e)
+{
+    const target = e.target.id
+// cursor position relative to canvas
+	var rect = mane_canvas.getBoundingClientRect();
+	var x = menu_x - rect.left;
+	var y = menu_y - rect.top;
+    console.log("handle_menu " + target);
+
+    if(busy) return;
+
+    set_busy();
+
+    (async () => {
+        if (target === "menu_edit")
+        {
+            edit_it();
+        }
+        else
+        if (target === "menu_new") 
+        {
+            await new_text(x, y, the_text.value);
+        }
+        else 
+        if (target === "menu_cut") 
+        {
+            if(handle_copy())
+            {
+                await handle_delete();
+            }
+        } 
+        else 
+        if (target === "menu_copy") 
+        {
+            handle_copy();
+        }
+        else 
+        if (target === "menu_paste_over") 
+        {
+            await paste_over_text(menu_x, menu_y);
+        }
+        else 
+        if (target === "menu_paste_new") 
+        {
+            await paste_new_text(menu_x, menu_y);
+        }
+        else 
+        if (target === "menu_delete") 
+        {
+            await handle_delete();
+        }
+        else 
+        if (target === "menu_all") 
+        {
+            select_all();
+        }
+        else
+        if(target === "save_png")
+        {
+            save_png();
+        }
+        else
+        if(target === "next_page")
+        {
+            page++;
+            await redraw(true);
+        }
+        else
+        if(target === "prev_page")
+        {
+            if(page > 1)
+            {
+                page--;
+                await redraw(true);
+            }
+        }
+        else
+        if(target.startsWith("fit_width"))
+        {
+            zoom_index = -1;
+            await redraw(true);
+        }
+        else
+        if(target.startsWith("zoom"))
+        {
+            zoom = parseInt(target.substring(4)) / 100;
+            zoom_index = zoom_to_index(zoom);
+            await redraw(true);
+        }
+
+        
+        clear_busy();
+    })();
+    
+}
+
+// left click outside context menu
+document.addEventListener("click", function () {
+    bgContextMenu.style.display = "none";
+    textContextMenu.style.display = "none";
+    viewContextMenu.style.display = "none";
+});
+
+
+mane_canvas.addEventListener("keydown", function(e) 
+{
+    console.log("mane_canvas keydown + " + e.keyCode.toString());
+    
+    if(e.keyCode == 46 || e.keyCode == 8)
+    {
+    }
+});
+
+page_text.addEventListener("keydown", function(e) {
+    console.log("page_text keydown + " + e.keyCode.toString());
+
+    if(e.key == "Enter" || e.keyCode == 13)
+    {
+        goto_page(parseInt(page_text.value));
+    }
+});
+
+font_size_text.addEventListener("wheel", function(e)
+{
+    var change = e.wheelDelta || -e.detail;
+    console.log("font_size_text mousewheel=" + change);
+
+    if(!busy && (change < 0 || change > 0))
+    {
+        if(have_selection())
+        {
+            (async () => {
+                set_busy();
+
+    // save the undo buffer, then set the flag to compress undo events
+                if(!changing_size)
+                {
+                    await save(true);
+                    changing_size = true;
+                }
+
+
+                if(change < 0)
+                {
+                    font_size--;
+                    if(font_size < MIN_FONT) font_size = MIN_FONT;
+                }
+                else
+                if(change > 0)
+                {
+                    font_size++;
+                    if(font_size > MAX_FONT) font_size = MAX_FONT;
+                }
+                font_size_text.value = font_size.toString();
+                handle_font_size();
+
+                clear_busy();
+            })();
+        }
+        else
+        {
+            if(change < 0)
+            {
+                font_size--;
+                if(font_size < MIN_FONT) font_size = MIN_FONT;
+            }
+            else
+            if(change > 0)
+            {
+                font_size++;
+                if(font_size > MAX_FONT) font_size = MAX_FONT;
+            }
+            font_size_text.value = font_size.toString();
+        }
+        
+    }
+});
+
+
+font_size_text.addEventListener("input", function(e) 
+{
+    font_size = parseInt(font_size_text.value);
+    console.log("font_size_text text=" + font_size_text.value + 
+        " font_size=" + font_size);
+});
+
+the_text.addEventListener("input", function(e) 
+{
+// require the paste button
+    return;
+
+//     font_size = parseInt(font_size_text.value);
+//     console.log("font_size_text text=" + font_size_text.value + 
+//         " font_size=" + font_size);
+// 
+//     var got_it = false;
+//     text_areas.forEach(function(text) {
+//         if(text.selected)
+//         {
+//             text.text = the_text.value;
+//             got_it = true;
+//         }
+//     });
+//     if(got_it) 
+//     {
+//         modified = true;
+//         update_title();
+//         draw_text(true);
+//     }
+});
+
+window.addEventListener("beforeunload", function (e) {
+    if(modified)
+    {
+        e.preventDefault(); // This prevents the browser from closing immediately
+
+        const confirmationMessage = "Changes unsaved.  Are you sure you want to quit?";
+        e.returnValue = confirmationMessage; // This sets the message for the confirmation dialog
+        return confirmationMessage;
+    }
+  });
+
+window.addEventListener("resize", resizeEvent, false);
+
+set_busy();
+
+(async () => {
+    await load(false, false);
+
+    console.log("mane continues 1")
+// configure the canvas size & draw
+    resize_common();
+// continue a login
+    if(!await initTokens(false))
+    {
+        console.log("mane continues 2")
+
+// try syncing the missing spreadsheet values
+        await sync_sheet(false, !is_login);
+        await redraw(true);
+    }
+    else
+    {
+        await redraw(true);
+    }
+
+    clear_busy();
+})();
+
+
+
+//console.log("mane continues")
+
+
+</script>
+
+

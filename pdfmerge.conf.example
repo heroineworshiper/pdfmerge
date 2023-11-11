@@ -1,0 +1,4 @@
+CLIENT_ID sdfkjaasdfasfasdfsadfsdfasdfasdfasdf.apps.googleusercontent.com
+AUTH_URI https://accounts.google.com/o/oauth2/auth
+TOKEN_URI https://oauth2.googleapis.com/token
+CLIENT_SECRET asdfjasdfasdfasdfasdfasdfasdfasdf
