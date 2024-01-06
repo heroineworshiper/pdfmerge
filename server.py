@@ -136,10 +136,15 @@ class MyServer(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", self.content_type(path))
         self.end_headers()
-        with open(path, 'rb') as file:
-            data = file.read()
-            self.wfile.write(data)
-            file.close()
+        try:
+            file = open(path, 'rb')
+        except FileNotFoundError:
+            print("send_file: Couldn't open %s" % path)
+        else:
+            with file:
+                data = file.read()
+                self.wfile.write(data)
+                file.close()
         
     def send_text(self, text):
         self.send_response(200)
@@ -452,8 +457,9 @@ if __name__ == "__main__":
             config.update({line[0:index]: line[index + 1:]})
     file.close()
 
-    for key, value in config.items():
-        print("    %s: %s" % (key, value))
+# print it
+#    for key, value in config.items():
+#        print("    %s: %s" % (key, value))
 
 
     print("Go to http://%s:%d to use the program.\n" % (HOSTNAME, port))

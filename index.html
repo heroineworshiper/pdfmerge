@@ -421,17 +421,18 @@ async function load_pdf()
 
 // Must load a file from the server rather than a local file to access the file
     var loadingTask = pdfjsLib.getDocument("get_pdf?path=" + pdf_path);
+    var decoded_page;
+    var viewport = null
 
     try {
         pdf = await loadingTask.promise;
+        decoded_page = await pdf.getPage(page);
     } catch(e)
     {
         console.error(e);
         return;
     }
 
-    const decoded_page = await pdf.getPage(page);
-    var viewport = null
 
 
 // recompute the zoom based on the true width
@@ -1992,18 +1993,18 @@ mane_canvas.addEventListener("contextmenu", function (e) {
     selected = select_text(e);
 
 // disable this to always show the bgContextMenu when not clicking over text
-    if(!selected)
-    {
-// test for previous selection
-        for(var i = 0; i < text_areas.length; i++)
-        {
-            if(text_areas[i].selected)
-            {
-                selected = true;
-                break;
-            }
-        }
-    }
+//     if(!selected)
+//     {
+// // test for previous selection
+//         for(var i = 0; i < text_areas.length; i++)
+//         {
+//             if(text_areas[i].selected)
+//             {
+//                 selected = true;
+//                 break;
+//             }
+//         }
+//     }
 
 // show it
     menu_x = e.clientX;
