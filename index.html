@@ -1,6 +1,6 @@
 <!--
  PDFMERGE
- Copyright (C) 2023 Adam Williams <broadcast at earthling dot net>
+ Copyright (C) 2023-2024 Adam Williams <broadcast at earthling dot net>
  
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -32,6 +32,12 @@
 }
 #col_text {
   width: 100;
+}
+#replace_src {
+  width: 70;
+}
+#replace_dst {
+  width: 70;
 }
 #font_size_text {
   width: 100;
@@ -92,6 +98,11 @@ ZOOM (ctrl -/+): <output id="zoom">100%</output>
 <button onClick="insert_row()"><b>INSERT ROW BEFORE</button>
 <button onClick="delete_row()"><b>DELETE ROW BEFORE</button>
 <b>ROW (1-1000): <input type="text" id="row_text" />
+
+<button onClick="replace()"><b>REPLACE CELL</button>
+<input type="text" id="replace_src" />
+<b>WITH: <input type="text" id="replace_dst" />
+
 <BR>
 <button onClick="insert_col()"><b>INSERT COLUMN BEFORE</button>
 <button onClick="delete_col()"><b>DELETE COLUMN BEFORE</button>
@@ -333,6 +344,27 @@ class TextArea
         }
     }
 
+// get the cell text
+    get_cell()
+    {
+        if(is_sheet(this.text))
+        {
+            var offset = this.text.indexOf("&range=") + 7;
+            return this.text.substring(offset);
+        }
+        return "";
+    }
+
+// replace the cell text
+    set_cell(range_text)
+    {
+        if(is_sheet(this.text))
+        {
+            var offset = this.text.indexOf("&range=") + 7;
+            var old_text = this.text.substring(0, offset);
+            this.text = old_text + range_text;
+        }
+    }
 }
 
 
@@ -1322,6 +1354,40 @@ function shift_col(amount)
     }
 }
 
+function replace()
+{
+console.log("replace 1");
+    if(!busy)
+    {
+        set_busy();
+        (async () => {
+            var got_it = false;
+            const want_cell = replace_src.value;
+            const replace_with = replace_dst.value;
+            for(const text of text_areas)
+            {
+console.log("replace 2 prev_text=" + text.get_cell());
+                if(text.get_cell().toLowerCase() == want_cell.toLowerCase())
+                {
+// save the undo buffer
+                    if(!got_it) await save(true);
+                    text.set_cell(replace_with);
+                    text.sheet_text = EMPTY_SHEET_TEXT;
+                    got_it = true;
+                }
+            }
+
+            if(got_it)
+            {
+// saves the redo buffer
+console.log("replace 3");
+                await sync_sheet(false, true);
+                draw_text(true);
+            }
+            clear_busy();
+        })();
+    } 
+}
 
 function insert_row()
 {
