@@ -527,7 +527,7 @@ async function sync_sheet(do_all, enable_login)
                     })
                     .then(data => {
 //                        console.log("sync_sheet data=" + data)
-                        if(data == "LOGIN")
+                        if(data == "__LOGIN")
                         {
                             need_login = true;
                         }

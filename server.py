@@ -267,7 +267,7 @@ class MyServer(BaseHTTPRequestHandler):
 # go to the consent prompt
             if access_token == "":
                 print("do_GET get_cell access_token not set")
-                self.send_text("LOGIN")
+                self.send_text("__LOGIN")
             else:
 # using OATH
                 print("do_GET get_cell path=" + self.path)
@@ -287,9 +287,12 @@ class MyServer(BaseHTTPRequestHandler):
                     print("do_GET get_cell json=" + response_dict["values"][0][0])
                     value = response_dict["values"][0][0]
                     self.send_text(value)
+                elif "range" in response_dict and "majorDimension" in response_dict:
+# can get here if a cell is blank
+                    self.send_text("BLANK")
                 else:
 # go to the consent prompt
-                    self.send_text("LOGIN")
+                    self.send_text("__LOGIN")
 
 
 
