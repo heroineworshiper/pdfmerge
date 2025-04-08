@@ -41,14 +41,17 @@ outside program to access a spreadsheet:
 
 https://www.youtube.com/watch?v=qwqJcyLQSSQ
 
-PDFmerge needs an oauth client ID, client secret, token URI.  These are
+The credentials for the oath2 client need http://localhost/pdfmerge.html
+as an authorized redirect URI.
+
+PDFmerge needs an oauth client ID, client secret, token URI. These are
 placed in the pdfmerge.conf file. The pdfmerge.conf.example contains
 some garbage to show the right format.
 
 Then run the server with the name of a project file.  If the file
 exists, it loads the project.  If it doesn't exist, it creates it.
 
-./server.py form
+./pdfmerge.py form
 
 
 Point a browser to the address shown to access the interface.  It has

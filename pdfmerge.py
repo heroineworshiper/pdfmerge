@@ -28,12 +28,14 @@ import subprocess
 import json
 import socket
 
-ports = [ 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090 ]
+ports = [ 8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090,
+    8091, 8092, 8093, 8094, 8095, 8096, 8097, 8098, 8099 ]
 port = ports[0]
 HOSTNAME = 'localhost'
 PROGRAM = 'PDFMerge'
+JS_FILE = 'pdfmerge.html'
 def get_redirect_uri():
-    return "http://" + HOSTNAME + ":" + str(port)
+    return "http://" + HOSTNAME + ":" + str(port) + "/" + JS_FILE
 
 # config dictionary
 config = { }
@@ -149,6 +151,12 @@ class MyServer(BaseHTTPRequestHandler):
     def send_text(self, text):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
+        self.wfile.write(text.encode('utf-8'))
+        
+    def send_html(self, text):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
         self.wfile.write(text.encode('utf-8'))
         
     def send_data(self, text):
@@ -295,18 +303,51 @@ class MyServer(BaseHTTPRequestHandler):
                     self.send_text("__LOGIN")
 
 
-
-        else:
-# convert the path
-            if path2 == '':
-                path2 = 'index.html'
-
-#           print("go_GET path2=%s" % path2)
+        elif path2 == JS_FILE:
 # test existence of file
             if os.path.exists(path2):
                 self.send_file(path2)
             else:
                 self.errorReport(404, 'Not found', self.path)
+
+        elif path2 == "favicon.ico":
+            self.send_text("Hello world")
+
+        else:
+            result = ""
+            result += "<B>Current PDFMerge files:<P>\n"
+# send a redirect page showing all the pdfmerge instances with the forms
+            processes = subprocess.check_output(['ps', 'xa']).decode('utf-8')
+            sockets = subprocess.check_output(['netstat', '-tulnp']).decode('utf-8')
+            process_lines = processes.split('\n')
+            socket_lines = sockets.split('\n')
+            for process_line in process_lines:
+                if sys.argv[0] in process_line:
+                    fields = process_line.split()
+                    pid = int(fields[0])
+                    file = fields[len(fields) - 1]
+                    print("Got PID %d file=%s\n" % (pid, file))
+                    for socket_line in socket_lines:
+                        fields = socket_line.rstrip().split()
+                        if len(fields) > 1:
+                            field = fields[len(fields) - 1]
+                            #print("line=%s field=%s\n" % (socket_line, field))
+                            if '/' in field:
+                                pid2 = int(field.split('/')[0])
+                                #print("line=%s PID=%s\n" % (socket_line, pid2))
+                                if pid == pid2:
+                                    address = fields[3]
+                                    address = address.replace('127.0.0.1', 'localhost')
+                                    url = "http://" + address + "/" + JS_FILE
+                                    #print("line=%s URL=%s file=%s\n" % (socket_line, url, file))
+                                    result += "<A HREF=\"%s\">%s %s</A><P>\n" % (url, address, file)
+            self.send_html(result)
+
+# convert the path
+#            if path2 == '':
+#                path2 = 'index.html'
+
+#           print("go_GET path2=%s" % path2)
 
 
 
