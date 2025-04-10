@@ -2008,7 +2008,7 @@ offset = redirect_uri.lastIndexOf(JS_FILE) + JS_FILE.length
 if(offset != -1)
 {
     redirect_uri = redirect_uri.substring(0, offset);
-    if(window.location.href.substring(offset + 1) == "?view")
+    if(window.location.href.substring(offset) == "?view")
         is_viewer = true;
 }
 console.log("redirect_uri=" + redirect_uri);
