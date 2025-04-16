@@ -1,7 +1,7 @@
 Overlay synchronized goog spreadsheet values on a PDF form.
 
 ------------------------------------------------------------------------------
-Copyright (C) 2023 Adam Williams <broadcast at earthling dot net>
+Copyright (C) 2023-2025 Adam Williams <broadcast at earthling dot net>
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -134,9 +134,13 @@ INSERTING & DELETING ROWS & COLUMNS
 
 If you insert & delete rows & columns in the spreadsheet, there's no way
 for pdfmerge to automatically track the new locations.  You have to
-enter the row or column after the delete or after the insert in the ROW
-or COLUMN box.  Then press INSERT/DELETE ROW/COLUMN BEFORE to shift all
-the references starting from that point by 1.
+press FIND REPOSITIONED CELLS for it to try to find where the cells
+went.  It searches 2 below, 2 above, 2 right & 2 left for matching cell
+contents.  This means you can only move cells in 4 directions up to 2
+cells at a time.  The contents have to stay unchanged until FIND
+REPOSITIONED CELLS.  Only then can the contents change.
+
+
 
 SAVING THE PROJECT
 
