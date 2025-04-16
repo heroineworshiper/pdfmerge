@@ -293,8 +293,11 @@ class MyServer(BaseHTTPRequestHandler):
                 response_dict = json.loads(text.decode('utf-8'))
                 if "values" in response_dict:
                     print("do_GET get_cell json=" + response_dict["values"][0][0])
-                    value = response_dict["values"][0][0]
-                    self.send_text(value)
+                    if arg_dict["range"] == "A1:Z256":
+                        self.send_text(json.dumps(response_dict["values"]))
+                    else:
+                        value = response_dict["values"][0][0]
+                        self.send_text(value)
                 elif "range" in response_dict and "majorDimension" in response_dict:
 # can get here if a cell is blank
                     self.send_text("BLANK")

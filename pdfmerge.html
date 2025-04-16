@@ -70,11 +70,40 @@
 .context-menu li:hover {
   background-color: #f0f0f0;
 }
+
+
+.error-popup {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffebee;
+    padding: 20px;
+    border: 2px solid #d32f2f;
+    border-radius: 5px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    display: none;
+    z-index: 1000;
+}
+.error-popup button {
+    background: #d32f2f;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
 </style>
 
 <font face=helvetica><b>
 
 <!-- LINK TO SPREADSHEET: <input type="text" id="sheet" /> -->
+
+<div id="errorPopup" class="error-popup">
+    <p id="errorMessage">An error occurred!</p>
+    <button onclick="closeError()">Close</button>
+</div>
 
 <div id="toolbox">
 
@@ -94,19 +123,23 @@ PAGE: <input type="text" id="page" />
 ZOOM (ctrl -/+): <output id="zoom">100%</output>
 <button onClick="fit()"><b>FIT WIDTH (ctrl-f)</button>
 
+
 <BR>
-<button onClick="insert_row()"><b>INSERT ROW BEFORE</button>
-<button onClick="delete_row()"><b>DELETE ROW BEFORE</button>
-<b>ROW (1-1000): <input type="text" id="row_text" />
+<button onClick="find_new_cells()"><b>FIND REPOSITIONED CELLS</button>
+
+
+<!-- <button onClick="insert_row()"><b>INSERT ROW BEFORE</button> -->
+<!-- <button onClick="delete_row()"><b>DELETE ROW BEFORE</button> -->
+<!-- <b>ROW (1-1000): <input type="text" id="row_text" /> -->
 
 <button onClick="replace()"><b>REPLACE CELL</button>
 <input type="text" id="replace_src" />
 <b>WITH: <input type="text" id="replace_dst" />
 
-<BR>
-<button onClick="insert_col()"><b>INSERT COLUMN BEFORE</button>
-<button onClick="delete_col()"><b>DELETE COLUMN BEFORE</button>
-<b>COLUMN (A-Z): <input type="text" id="col_text" />
+<!-- <BR> -->
+<!-- <button onClick="insert_col()"><b>INSERT COLUMN BEFORE</button> -->
+<!-- <button onClick="delete_col()"><b>DELETE COLUMN BEFORE</button> -->
+<!-- <b>COLUMN (A-Z): <input type="text" id="col_text" /> -->
 <BR>
 
 SIZE: <input type="text" id="font_size_text" />
@@ -368,6 +401,20 @@ class TextArea
     }
 }
 
+// grok
+function showError(message = "An error occurred!") {
+    const popup = document.getElementById("errorPopup");
+    const messageElement = document.getElementById("errorMessage");
+    messageElement.textContent = message;
+    popup.style.display = "block";
+}
+
+function closeError() {
+    const popup = document.getElementById("errorPopup");
+    popup.style.display = "none";
+}
+
+
 
 function set_busy()
 {
@@ -532,86 +579,124 @@ async function load_pdf()
         });
 }
 
+// exits whatever it was doing & just logs in
+async function start_login()
+{
+// save before reload
+    is_login = true;
+    modified = true;
+// saves the redo history here
+    await save(false);
+// reloads in here & never returns
+    await initTokens(true);
+}
+
+// load the entire sheet & return a 2D array with the contents
+// returns null if there is no sheet
+// Assume all cells use the same sheet
+async function load_sheet(enable_login)
+{
+    var need_login = false
+    var got_sheet = false
+    var sheet = null
+// get the 1st cell with a URL
+    for(const text of text_areas) 
+    {
+        if(is_sheet(text.text))
+        {
+            var url = get_sheet_range(text.text)[0]
+// maximum range
+            var range = "A1:Z256"
+            await fetch("get_cell?sheet=" + url +
+                "&range=" + range)
+                .then(response => {
+                    return response.text();
+                })
+                .then(data => {
+                    if(data == "__LOGIN")
+                    {
+                        need_login = true;
+                    }
+                    else
+                    {
+// got it.  Convert to an array
+                        console.log("load_sheet data=" + data)
+                        parsed = JSON.parse(data);
+                        sheet = parsed.map(obj => Object.values(obj));
+//                        console.log(sheet);
+                        got_sheet = true
+                    }
+                })
+                .catch(e => {
+                    console.error(e);
+                });
+
+            if(need_login || got_sheet) break
+        }
+    }
+    
+    if(need_login && enable_login)
+    {
+        start_login()
+    }
+    
+    return sheet
+}
+
+
 // load missing values from the spreadsheet
 // do_all causes all values to be reloaded
 // always redraws the text
 async function sync_sheet(do_all, enable_login)
 {
-    var got_it = false;
-    var need_login = false;
+    var changed = false;
+    var total_changed = 0;
     
     console.log("sync_sheet 1 do_all=" + do_all + " enable_login=" + enable_login);
 
-    for(const text of text_areas) {
-//        console.log("sync_sheet text=" + text.text)
-        if(is_sheet(text.text))
+    var sheet = await load_sheet(enable_login)
+
+    if(sheet != null)
+    {
+        for(const text of text_areas) 
         {
-//            console.log("sync_sheet sheet_text=" + text.sheet_text)
-            if(do_all || text.sheet_text == EMPTY_SHEET_TEXT)
+    //        console.log("sync_sheet text=" + text.text)
+            if(is_sheet(text.text))
             {
-                var result = get_sheet_range(text.text);
-                var sheet = result[0];
-                var range = result[1];
-//                console.log("sync_sheet sheet=" + sheet + " range=" + range)
-                await fetch("get_cell?sheet=" + sheet +
-                    "&range=" + range)
-                    .then(response => {
-                        return response.text();
-                    })
-                    .then(data => {
-//                        console.log("sync_sheet data=" + data)
-                        if(data == "__LOGIN")
-                        {
-                            need_login = true;
-                        }
-                        else
-                        {
-                            text.sheet_text = data;
-                            got_it = true;
-                        }
-                    })
-                    .catch(e => {
-                        console.error(e);
-                    });
+    //            console.log("sync_sheet sheet_text=" + text.sheet_text)
+                if(do_all || text.sheet_text == EMPTY_SHEET_TEXT)
+                {
+                    var result = get_sheet_range(text.text);
+                    var url = result[0];
+                    var range = result[1];
+                    var xy = range_to_xy(range)
+
+                    if(xy[1] < sheet.length &&
+                        xy[0] < sheet[xy[1]].length &&
+                        text.sheet_text != sheet[xy[1]][xy[0]])
+                    {
+                        text.sheet_text = sheet[xy[1]][xy[0]];
+                        changed = true;
+                        total_changed++;
+                    }
+                }
             }
         }
-
-        if(need_login) break;
     }
 
-
-    console.log("sync_sheet need_login=" + need_login + 
+    console.log("sync_sheet sheet=" + sheet + 
         " enable_login=" + enable_login + 
-        " got_it=" + got_it)
+        " changed=" + changed +
+        " total_changed=" + total_changed)
 
-    if(need_login && enable_login)
-    {
-// save before reload
-        console.log("sync_sheet need_login && enable_login");
-        is_login = true;
-        modified = true;
-// saves the redo history here
-        await save(false);
-// reloads in here & never returns
-        await initTokens(true);
-    }
-    else
-    if(got_it)
-    {
+    if(changed)
         console.log("sync_sheet got_it");
-        is_login = false;
-        modified = true;
-// saves the redo history here
-        await save(false);
-    }
     else
-    {
         console.log("sync_sheet did nothing");
-        is_login = false;
-        modified = true;
+    is_login = false;
+    modified = true;
 // saves the redo history here
-        await save(false);
-    }
+    await save(false);
 }
 
 function resync_pressed()
@@ -883,8 +968,8 @@ async function save(is_undo)
         "PDF " + pdf_path + "\n" +
         "ZOOM_INDEX " + zoom_index + "\n" +
         "PAGE " + page + "\n" +
-        "SHIFT_ROW " + row_text.value + "\n" +
-        "SHIFT_COL " + col_text.value + "\n" +
+//         "SHIFT_ROW " + row_text.value + "\n" +
+//         "SHIFT_COL " + col_text.value + "\n" +
         "SCROLL_X " + scroll_x + "\n" +
         "SCROLL_Y " + scroll_y + "\n" +
         "FONT_SIZE " + font_size + "\n" +
@@ -926,36 +1011,68 @@ async function save(is_undo)
         });
 }
 
+
+async function undo_async()
+{
+    await compress_redos();
+    modified = true;
+
+// copy some settings to determine what to update
+    const prev_page = page;
+    const prev_pdf = pdf_path;
+    const prev_zoom_index = zoom_index;
+    const prev_zoom = zoom;
+
+    await load(true, false);
+
+    if(prev_page != page ||
+        prev_pdf != pdf_path ||
+        prev_zoom_index != zoom_index)
+    {
+        await redraw(true);
+    }
+    else
+    {
+        zoom = prev_zoom;
+        update_title();
+        await draw_text(true);
+    }
+}
+
 function undo()
 {
     if(busy) return;
     set_busy();
     (async () => {
-        await compress_redos();
-        modified = true;
-
-// copy some settings to determine what to update
-        const prev_page = page;
-        const prev_pdf = pdf_path;
-        const prev_zoom_index = zoom_index;
-        const prev_zoom = zoom;
-
-        await load(true, false);
-        
-        if(prev_page != page ||
-            prev_pdf != pdf_path ||
-            prev_zoom_index != zoom_index)
-        {
-            await redraw(true);
-        }
-        else
-        {
-            zoom = prev_zoom;
-            update_title();
-            await draw_text(true);
-        }
+        await undo_async();
         clear_busy();
     })();
+}
+
+async function redo_async()
+{
+    await compress_redos();
+    modified = true;
+// copy some settings to determine what to update
+    const prev_page = page;
+    const prev_pdf = pdf_path;
+    const prev_zoom_index = zoom_index;
+    const prev_zoom = zoom;
+
+    await load(false, true);
+
+    if(prev_page != page ||
+        prev_pdf != pdf_path ||
+        prev_zoom_index != zoom_index)
+    {
+        await redraw(true);
+    }
+    else
+    {
+        zoom = prev_zoom;
+        update_title();
+        await draw_text(true);
+    }
 }
 
 function redo()
@@ -963,28 +1080,7 @@ function redo()
     if(busy) return;
     set_busy();
     (async () => {
-        await compress_redos();
-        modified = true;
-// copy some settings to determine what to update
-        const prev_page = page;
-        const prev_pdf = pdf_path;
-        const prev_zoom_index = zoom_index;
-        const prev_zoom = zoom;
-
-        await load(false, true);
-
-        if(prev_page != page ||
-            prev_pdf != pdf_path ||
-            prev_zoom_index != zoom_index)
-        {
-            await redraw(true);
-        }
-        else
-        {
-            zoom = prev_zoom;
-            update_title();
-            await draw_text(true);
-        }
+        await redo_async();
         clear_busy();
     })();
 }
@@ -1112,14 +1208,14 @@ async function load(is_undo, is_redo)
                     page = parseInt(get_value(line));
                     page_text.value = page;
                 }
-                else if(line.startsWith("SHIFT_ROW"))
-                {
-                    row_text.value = get_value(line);
-                }
-                else if(line.startsWith("SHIFT_COL"))
-                {
-                    col_text.value = get_value(line);
-                }
+//                 else if(line.startsWith("SHIFT_ROW"))
+//                 {
+//                     row_text.value = get_value(line);
+//                 }
+//                 else if(line.startsWith("SHIFT_COL"))
+//                 {
+//                     col_text.value = get_value(line);
+//                 }
                 else if(line.startsWith("SCROLL_X"))
                 {
                     if(!is_viewer) scroll_x = parseInt(get_value(line));
@@ -1389,6 +1485,228 @@ console.log("replace 3");
         })();
     } 
 }
+
+// convert a cell location to an X & Y
+// X is limited to A-Z for now
+function range_to_xy(range)
+{
+    var result = [ range.toLowerCase().charCodeAt(0) - 97,
+        parseInt(range.slice(1)) - 1 ]
+    return result
+}
+
+// 
+function xy_to_range(xy)
+{
+    var result = "" + String.fromCharCode(97 + xy[0]) + 
+        (xy[1] + 1).toString()
+    result = result.toUpperCase()
+    return result
+}
+
+// runs twice inside find_new_cells to avoid saving an unnecessary undo buffer
+// return true if it failed or didn't do anything
+async function find_new_cells_async(dry_run)
+{
+// local change
+    var changed = false
+    var total_changed = 0
+    var need_login = false
+    var got_sheet = false
+// if the next cell move doesn't match the last move, the operation failed
+// to detect the right cell movement
+    var prev_offset = [ 0, 0 ]
+    var prev_cell = ""
+    var prev_text
+    var error = false
+    for(const text of text_areas) 
+    {
+// got a text area with a cell
+        if(is_sheet(text.text))
+        {
+            var url = get_sheet_range(text.text)
+// TODO: call load_sheet
+            if(!got_sheet)
+            {
+                var sheet = url[0]
+// get the entire spreadsheet.  Assum all cells use the same sheet
+// maximum range
+                var range = "A1:Z256"
+                await fetch("get_cell?sheet=" + sheet +
+                    "&range=" + range)
+                    .then(response => {
+                        return response.text();
+                    })
+                    .then(data => {
+                        if(data == "__LOGIN")
+                        {
+                            need_login = true;
+                        }
+                        else
+                        {
+// got it
+                            console.log("find_new_cells data=" + data)
+                            parsed = JSON.parse(data);
+                            sheet = parsed.map(obj => Object.values(obj));
+                            console.log(sheet);
+                            got_sheet = true
+                        }
+                    })
+                    .catch(e => {
+                        console.error(e);
+                    });
+
+                if(need_login) break
+            }
+
+// search for matching cell contents in neighboring cells
+// the user should only use it for shifting 1 cell at a time in 4 directions
+            const search_pattern = [
+                0, 0, // xy offsets
+                0, 1,
+                0, 2,
+                1, 0,
+                2, 0,
+                0, -1,
+                0, -2,
+                -1, 0,
+                -2, 0,
+            ]
+            var xy = range_to_xy(url[1])
+            var got_it = false
+            for(var i = 0; i < search_pattern.length; i += 2)
+            {
+                var xy2 = [xy[0] + search_pattern[i], 
+                    xy[1] + search_pattern[i + 1]]
+
+                if(xy2[1] < sheet.length &&
+                    xy2[0] < sheet[xy2[1]].length &&
+                    text.sheet_text == sheet[xy2[1]][xy2[0]])
+                {
+                    got_it = true
+                    console.log("text=" + text.sheet_text + 
+                        " url=" + url[1] + 
+                        " prev_offset=" + prev_offset[0] +
+                        "," + prev_offset[1] +
+                        " search_pattern=" + search_pattern[i] + 
+                        "," + search_pattern[i + 1] + 
+                        " sheet=" + sheet[xy2[1]][xy2[0]] + 
+                        " form=" + text.sheet_text)
+
+// cell moved
+                    if(i != 0)
+                    {
+// 1st cell which moved
+                        if(!changed)
+                        {
+                            changed = true;
+                        }
+                        else
+                        {
+// fail if it didn't match the last move
+                            if(prev_offset[0] != search_pattern[i] ||
+                                prev_offset[1] != search_pattern[i + 1])
+                            {
+                                changed = false
+                                showError("Cell " + url[1] + 
+                                    " " + text.sheet_text + 
+                                    " (movement " + prev_offset[0] +
+                                    "," + prev_offset[1] +
+                                    ") didn't follow previous cell " + prev_cell + 
+                                    " " + prev_text.sheet_text + 
+                                    " (movement " + search_pattern[i] + 
+                                    "," + search_pattern[i + 1] + 
+                                    ")")
+                                error = true
+                                break
+                            }
+                        }
+// change the URL
+                        if(!error)
+                        {
+                            prev_offset[0] = search_pattern[i]
+                            prev_offset[1] = search_pattern[i + 1]
+                            prev_cell = url[1]
+                            prev_text = text
+                            var range2 = xy_to_range(xy2)
+                            if(!dry_run)
+                            {
+                                console.log("old cell=" + url[1] + 
+                                    " new cell=" + range2);
+                                text.set_cell(range2)
+                                total_changed++
+                            }
+                        }
+
+                    }
+                    break
+                }
+            }
+
+            if(!got_it)
+            {
+                changed = false
+                showError("Contents of " + url[1] + 
+                    " (" + text.sheet_text + 
+                    ") not found")
+                error = true
+            }
+        }
+
+        if(error) break
+    }
+
+    if(need_login)
+    {
+// exits the operation here & just logs in
+        start_login()
+    }
+    else
+    if(changed)
+    {
+        is_login = false;
+        if(!dry_run)
+        {
+            modified = true;
+            showError("Changed " + total_changed + 
+                " cells (movement " + prev_offset[0] + 
+                "," + prev_offset[1] + ")")
+        }
+    }
+    else
+    if(!error)
+    {
+        showError("Found no changed cells")
+        console.log("find_new_cells did nothing");
+    }
+
+console.log("find_new_cells changed=" + changed + " error=" + error);
+    return (!changed) || error
+}
+
+// find new cell positions
+function find_new_cells()
+{
+    if(!busy)
+    {
+        set_busy();
+        (async () => {
+// dry run
+            if(!await find_new_cells_async(true))
+            {
+//console.log("find_new_cells");
+// save the undo buffer
+                await save(true);
+                await find_new_cells_async(false)
+// saves the redo buffer
+                await save(false);                
+            }
+
+            clear_busy();
+        })();
+    }
+}
+
 
 function insert_row()
 {
