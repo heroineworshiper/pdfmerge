@@ -140,7 +140,8 @@ contents.  This means you can only move cells in 4 directions up to 2
 cells at a time.  The contents have to stay unchanged until FIND
 REPOSITIONED CELLS.  Only then can the contents change.
 
-
+If multiple forms access the same spreadsheet, you have to run FIND
+REPOSITIONED CELLS in every form before changing the contents.
 
 SAVING THE PROJECT
 
