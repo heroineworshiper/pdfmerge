@@ -37,6 +37,9 @@ JS_FILE = 'pdfmerge.html'
 def get_redirect_uri():
     return "http://" + HOSTNAME + ":" + str(port) + "/" + JS_FILE
 
+# directory of the pdfmerge.py program
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
 # config dictionary
 config = { }
 
@@ -308,10 +311,10 @@ class MyServer(BaseHTTPRequestHandler):
 
         elif path2 == JS_FILE:
 # test existence of file
-            if os.path.exists(path2):
-                self.send_file(path2)
+            if os.path.exists(script_dir + "/" + path2):
+                self.send_file(script_dir + "/" + path2)
             else:
-                self.errorReport(404, 'Not found', self.path)
+                self.errorReport(404, script_dir + "/" + path2 + ' not found. ', self.path)
 
         elif path2 == "favicon.ico":
             self.send_text("Hello world")
@@ -466,6 +469,7 @@ if __name__ == "__main__":
         exit()
         
     print("Welcome to %s" % PROGRAM)
+    print("script_dir=" + script_dir)
     project_path = sys.argv[1]
 
     for i in range(len(ports)):
@@ -491,7 +495,7 @@ if __name__ == "__main__":
 
 # load config file
     print("Loading config file")
-    file = open("pdfmerge.conf", "r")
+    file = open(script_dir + "/pdfmerge.conf", "r")
     while True:
         line = file.readline()
         if line == "":
